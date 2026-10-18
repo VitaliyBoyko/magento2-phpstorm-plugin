@@ -5,7 +5,11 @@
 </p>
 
 <!-- Plugin description -->
-# Magento 2 and Adobe Commerce
+# Magento 2 and Adobe Commerce plugin for PhpStorm
+
+Navigate Magento XML, PHP, RequireJS, GraphQL and MFTF code from PhpStorm, inspect configuration, and generate module components. This repository also implements Magento-specific Model Context Protocol (MCP) tools so connected AI assistants can query the indexed project and invoke generators.
+
+This is [VitaliyBoyko’s fork](https://github.com/VitaliyBoyko/magento2-phpstorm-plugin) of the [Magento plugin](https://github.com/magento/magento2-phpstorm-plugin). See [releases](https://github.com/VitaliyBoyko/magento2-phpstorm-plugin/releases) for this repository’s builds.
 
 <table align="center" style="border-collapse: collapse; width: 100%; text-align: center;">
   <caption style="font-size: 1.2em; margin-bottom: 10px;">
@@ -66,14 +70,14 @@
 
 1. Go to `Settings > Preferences` in the PhpStorm IDE
 2. Navigate to `Plugins`
-3. Click the `Browse repositories...` button and search for "Magento 2 and Adobe Commerce"
+3. Open the `Marketplace` tab and search for "Magento 2 and Adobe Commerce"
 4. Install the plugin and restart PhpStorm
 5. Go to `Settings > Preferences > Languages & Frameworks > PHP > Frameworks > Magento` in the PhpStorm IDE
 6. Check `Enable` and click the `OK` button
 
 ## Works with
 
-* PhpStorm 2026+
+The current branch targets PhpStorm build `261.22158.208`, with a declared compatibility range from `261.21525.38` through `268.*` in [gradle.properties](gradle.properties). Check the specific release or Marketplace listing for its supported IDE builds; the declared range is not a claim that every future build has been tested.
 
 ## MCP tools
 
@@ -146,6 +150,10 @@ Agent usage pattern:
 1. In the Gradle tool window, run `Tasks > Intellij platform > runIde`.
 1. The task launches a PhpStorm sandbox with the plugin installed. Make sure the plugin is enabled and indexing is finished before testing features.
 
+## Support for this fork
+
+Report problems with this repository’s changes in [VitaliyBoyko/magento2-phpstorm-plugin issues](https://github.com/VitaliyBoyko/magento2-phpstorm-plugin/issues). Include the IDE build, plugin version, Magento root configuration and a minimal reproduction. The upstream contribution links below refer to the original Magento project.
+
 ## How to contribute
 1) Start with looking into [Community Backlog](https://github.com/magento/magento2-phpstorm-plugin/issues?q=is%3Aissue%20state%3Aopen%20label%3A%22good%20first%20issue%22). Any ticket in `Ready for Development` and `Good First Issue` columns are a good candidates to start.
 2) Didn't satisfy your requirements? [Create a new issue](https://github.com/magento/magento2-phpstorm-plugin/issues/new). It can be for example:
@@ -193,3 +201,23 @@ declare(strict_types=1);
 Each Magento source file included in this distribution is licensed under OSL-3.0 license.
 
 Please read the [LICENSE.txt](https://github.com/magento/magento2-phpstorm-plugin/blob/5.4.0-develop/LICENSE.txt) for the full text of the [Open Software License v. 3.0 (OSL-3.0)](http://opensource.org/licenses/osl-3.0.php).
+
+## FAQ
+
+### Why are Magento MCP tools unavailable?
+
+Enable Magento support for the project, finish indexing, and enable the IDE MCP server. Connect your assistant to that server. The tools use the currently opened IDE project; check its Magento root before requesting generation. See [MCP tools](#mcp-tools).
+
+### How do I start with an indexed Magento project?
+
+Ask the connected assistant: “Get the Magento root, find the Magento_Catalog module, and describe the Magento CLI environment.” These map to `get_magento_root_path`, `find_magento_module`, and `describe_magento_cli_environment`. Review the returned paths before using code generators.
+
+### Can I use Docker command wrappers?
+
+Yes. Configure the [MCP CLI wrapper candidates](#mcp-cli-wrapper-configuration), then use the paths returned by `describe_magento_cli_environment`. This supports nested Magento roots and project-local tools.
+
+## Related Magento development tools
+
+- [MageLens](https://github.com/VitaliyBoyko/MageLens): local Docker Magento environment with PHP, JavaScript and template coverage from Cypress or Playwright tests.
+- [Magento Seq](https://github.com/VitaliyBoyko/magento-seq): forward local Magento logs and custom events to Seq.
+- [Seq MCP](https://github.com/VitaliyBoyko/seq-intellij-mcp): query Seq logs from a compatible JetBrains IDE through MCP. It is a separate plugin with its own IDE requirements.
