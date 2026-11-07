@@ -15,6 +15,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0).
 
 - Updated the PhpStorm development/test platform to 2026.2.4, WebStorm UI tests to 2026.3 RC, and the plugin verifier targets to patched 2026.2.4 and 2026.3 RC builds following the [JetBrains eMudhra certificate advisory](https://blog.jetbrains.com/security/2026/10/compromised-emudhra-certificates-ides/) [#2779](https://github.com/magento/magento2-phpstorm-plugin/pull/2779). Users must update and restart their IDE separately; installing this plugin does not patch the host runtime, embedded browser, or `jetbrainsd` service (which requires 0.9.9728 or later).
 
+### Changed
+
+- Verify against stable PhpStorm and WebStorm 2026.3 builds, including the WebStorm UI test runtime, while retaining the 2026.2.4 compatibility baseline.
+
 ### Fixed
 
 - The View Model injection action stays hidden when PhpStorm cannot locate its bundled `jsLanguageServicesImpl` resources during PSI lookup, instead of reporting an action-update exception [#1924](https://github.com/magento/magento2-phpstorm-plugin/issues/1924). The IDE installation still needs to be repaired separately.
