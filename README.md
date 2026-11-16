@@ -5,11 +5,7 @@
 </p>
 
 <!-- Plugin description -->
-# Magento 2 and Adobe Commerce plugin for PhpStorm
-
-Navigate Magento XML, PHP, RequireJS, GraphQL and MFTF code from PhpStorm, inspect configuration, and generate module components. This repository also implements Magento-specific Model Context Protocol (MCP) tools so connected AI assistants can query the indexed project and invoke generators.
-
-This is [VitaliyBoyko’s fork](https://github.com/VitaliyBoyko/magento2-phpstorm-plugin) of the [Magento plugin](https://github.com/magento/magento2-phpstorm-plugin). See [releases](https://github.com/VitaliyBoyko/magento2-phpstorm-plugin/releases) for this repository’s builds.
+# Magento 2 and Adobe Commerce
 
 <table align="center" style="border-collapse: collapse; width: 100%; text-align: center;">
   <caption style="font-size: 1.2em; margin-bottom: 10px;">
@@ -68,91 +64,67 @@ This is [VitaliyBoyko’s fork](https://github.com/VitaliyBoyko/magento2-phpstor
 
 ## Installation
 
-1. Go to `Settings > Preferences` in the PhpStorm IDE
-2. Navigate to `Plugins`
-3. Open the `Marketplace` tab and search for "Magento 2 and Adobe Commerce"
-4. Install the plugin and restart PhpStorm
-5. Go to `Settings > Preferences > Languages & Frameworks > PHP > Frameworks > Magento` in the PhpStorm IDE
-6. Check `Enable` and click the `OK` button
+1. Open **Settings > Plugins** in your IDE.
+2. Search for "Magento 2 and Adobe Commerce" in the Marketplace.
+3. Install the plugin and restart the IDE.
+4. Open **Settings > Languages & Frameworks > PHP > Frameworks > Magento**, or **Settings > Tools > Magento** in WebStorm.
+5. Check **Enable** and click **OK**.
 
 ## Works with
 
-The current branch targets PhpStorm build `261.22158.208`, with a declared compatibility range from `261.21525.38` through `268.*` in [gradle.properties](gradle.properties). Check the specific release or Marketplace listing for its supported IDE builds; the declared range is not a claim that every future build has been tested.
+* PhpStorm, WebStorm, and IntelliJ IDEA 2026.3+ with JavaScript and CSS support.
+* PHP features require the PHP plugin; XML, JavaScript, theme, and other PHP-independent features also work without it.
+
+## Indexing exclusions
+
+Magento settings exclude generated and runtime outputs by default, including directories named `.cache` anywhere under the configured Magento root. Newly created cache directories are picked up automatically. Source beside these caches remains indexed. You can preview the paths, disable exclusions, or reset plugin-managed exclusions through settings or MCP; existing manual exclusions are preserved.
 
 ## MCP tools
 
-The plugin exposes a Magento-specific MCP toolset for AI agents inside JetBrains IDEs with MCP support enabled.
+Connect your AI assistant to PhpStorm or WebStorm to find Magento modules, DI declarations, observers, layouts, UI components, and ACL/menu entries. PHP method analysis, code generation, and upgrade compatibility checks require the JetBrains PHP plugin.
 
-Available project and creation tools:
+1. Open your Magento project and enable the plugin in the Magento settings page. Check the Magento installation path if it differs from the project directory.
+2. Enable the IDE's **MCP Server** and add its connection to your assistant using the configuration shown in the IDE.
+3. Wait for indexing to finish, then ask your assistant to work with the open project. For example:
+   * “Find the plugins and observers used by Application_Blog.”
+   * “Create a Magento module named Acme_Example.”
+   * “Check Application_Blog against the next published Magento minor release and explain the findings.”
 
-* `get_magento_root_path`: returns the resolved Magento root directory for the current IDE project. Use this when an agent or shell command needs an absolute project path.
-* `create_magento_module`: creates a new Magento module with `composer.json`, `registration.php`, and `etc/module.xml`. Pass Magento module parts such as `packageName=Foo` and `moduleName=Bar` to create `Foo_Bar`; the Composer package name is derived automatically as `foo/module-bar`.
-* `create_magento_plugin`: creates a plugin class and the matching `di.xml` declaration. `moduleName` must be `Vendor_Module`, `targetClassName` must be an existing PHP FQN such as `Magento\\Catalog\\Api\\ProductRepositoryInterface`, `targetMethodName` is the intercepted method name, and `pluginType` must be `before`, `around`, or `after`.
-* `create_magento_observer`: creates an observer class and `events.xml` declaration. `moduleName` must be `Vendor_Module`, `eventName` should be a Magento event such as `catalog_product_save_after`, and `observerClassFqn` should live inside the module namespace, usually under `Observer\\`.
-* `create_magento_entity_crud`: scaffolds a Magento CRUD module area including DB schema, model, resource model, collection, repository-related classes, ACL/menu entries, and optional admin UI pieces. `properties` must be a list of `field_name:type` values such as `["title:string", "is_active:bool"]`; the primary ID field is generated automatically.
-* `create_magento_controller`: creates a controller class in an editable module. `controllerClassFqn` must be under the module `Controller` namespace, for example `Foo\\Bar\\Controller\\Index\\Index` or `Foo\\Bar\\Controller\\Adminhtml\\Order\\Index`, and `httpMethod` must be `GET`, `POST`, `PUT`, or `DELETE`.
-* `create_magento_cli_command`: creates a Symfony console command class and registers it in `etc/di.xml`. `commandClassFqn` usually belongs under `Console\\Command`, and `commandName` should be a Magento CLI command name such as `foo:bar:sync-data`.
-* `create_magento_block`: creates a block class under the module `Block\\` namespace, for example `Foo\\Bar\\Block\\Product\\BadgeBlock`.
-* `create_magento_view_model`: creates a view model class under the module `ViewModel\\` namespace, for example `Foo\\Bar\\ViewModel\\Product\\BadgeViewModel`.
-* `create_magento_product_eav_attribute`: creates a product EAV attribute data patch and optional source model. `attributeCode` must be lower_snake_case, `backendType` and `frontendInput` must be valid Magento attribute types, and `options` may only be used for `select` or `multiselect`.
-* `create_magento_category_eav_attribute`: creates a category EAV attribute data patch, `view/adminhtml/ui_component/category_form.xml`, and an optional source model using the same attribute format rules as the product tool.
-* `create_magento_customer_eav_attribute`: creates a customer EAV attribute data patch and optional source model using Magento customer attribute rules.
+Compatibility checks can download release data on first use. Ask for **only new upgrade issues** to exclude issues already present in the installed version. The checks cover Magento Open Source core APIs; review Commerce extensions, third-party code, and runtime behavior separately.
 
-Available query and inspection tools:
+In the Magento settings page, you can also:
 
-* `find_magento_module`: finds modules by exact or partial Magento module name such as `Magento_Catalog`, `Foo_Bar`, `Catalog`, or `Magento_`. Use this to confirm the canonical module name and path before generating code.
-* `find_di_config_for_class`: finds `di.xml` declarations related to a PHP FQN or virtual type name such as `Magento\\Catalog\\Model\\Product` or `catalogProductRepository`. Use this to inspect preferences, virtual types, arguments, and related DI wiring before making changes.
-* `find_plugins_for_method`: finds plugins for a target class or interface method. Pass a PHP FQN such as `Magento\\Catalog\\Api\\ProductRepositoryInterface` and a bare method name such as `save` or `getById`.
-* `find_observers_for_event`: finds observers by full or partial event name such as `catalog_product_save_after` or `product_save` and returns matching `events.xml` declarations.
-* `find_layout_entities`: finds layout handles, block names, and container names by exact or partial value such as `catalog_product_view`, `product.info.main`, or `checkout`.
-* `find_ui_component`: finds UI component XML definitions by exact or partial component file name such as `product_form`, `sales_order_grid`, or `category_form` without the `.xml` extension.
-* `find_acl_or_menu`: finds ACL resource IDs and admin menu entries by exact or partial identifier such as `Magento_Catalog::catalog` or `Foo_Bar::manage_items`.
-* `describe_magento_cli_environment`: detects project-local CLI wrappers such as Mark Shust Docker scripts under project-level or Magento-root `bin/`, returns the exact command paths an agent should use, and includes example invocations for Magento CLI, PHP, Composer, `n98-magerun`, and stack lifecycle commands such as `./bin/start`.
+* Install the bundled **Magento inspect** and **Magento scaffold** skills for your assistant.
+* Set **MCP CLI wrapper candidates** when your project uses Docker or other wrapper scripts, for example `bin/magento, bin/cli, bin/composer`.
+* Change **Published releases URL** to use a GitHub-compatible release catalog mirror. Leave it blank to use the official Magento GitHub catalog.
 
-Notes:
+Reconnect your assistant after updating the plugin so it discovers the latest tools. If it connects to the wrong project, check the IDE connection and project path. When running multiple IDEs, ensure their MCP servers use different ports.
 
-* The IDE MCP server must be enabled in the JetBrains IDE.
-* Only one JetBrains IDE instance should have the MCP server enabled at a time so the configured MCP port stays free; if another IDE is already using that port, the MCP server will not start correctly.
-* The IDE MCP server entry must be added to the agent MCP configuration.
-* MCP tools work against the currently opened IDE project.
-* Magento plugin support must be enabled for the project.
-* Indexing must be finished before MCP queries and generators can run.
-* Category EAV attribute generation creates both the data patch and `view/adminhtml/ui_component/category_form.xml`.
-* `describe_magento_cli_environment` detects project-local wrappers such as Mark Shust Docker scripts under project-level or Magento-root `bin/` and returns the exact command paths an agent should use, including stack lifecycle wrappers such as `bin/start`, `bin/stop`, and `bin/restart`.
+Use **`magento_intelligence`** to discover available Magento and Adobe Commerce MCP tools. Call it with an exact tool name to see that tool’s argument schema. In JetBrains router mode, both `magento_intelligence` and `magento_skills` appear directly by default. If you use the router, pass `magento_skills --mode status --agentTarget agents` to `execute_tool` to check project skill copies. The three skills also appear in the JetBrains bundled skill catalog on builds that support bundled skill providers. Delivery to a managed agent session depends on JetBrains’ skill policy.
 
-### MCP CLI wrapper configuration
+Discovery works before Magento support is enabled or a Magento root is configured and does not change project settings. To discover setup arguments, call `magento_intelligence` with `tool: "configure_magento_project"`. If your assistant exposes only the router, call `execute_tool` with `command: "magento_intelligence --tool configure_magento_project"` and `projectPath` set to the current IDE project directory. Disabled-support and missing-root responses include these next steps.
 
-If your Magento project uses local wrapper scripts such as Mark Shust Docker commands, configure them in:
+You can ask your assistant to install skills through **`magento_skills`**, independently of project setup. It can inspect installed copies with `mode: "status"` and install selected skills with `mode: "install"`, for example `skills: ["magento-inspect"]`. Choose the project, agents, Codex, or Claude folder with `agentTarget: "project"`, `"agents"`, `"codex"`, or `"claude"`. Customized copies are preserved unless replacement is explicitly requested. The tool returns local skill links and the [suggested AGENTS.md guidance](https://github.com/magento/magento2-phpstorm-plugin/wiki/MCP#suggested-agentsmd-instructions) for your assistant to adapt into existing instructions; it never edits `AGENTS.md` automatically. Skill installation works in WebStorm, but scaffold usage and compatibility analysis still require the PHP plugin.
 
-`Settings > Languages & Frameworks > PHP > Frameworks > Magento > MCP CLI wrapper candidates`
-
-Use a comma-separated list of relative paths, for example:
-
-`bin/magento, bin/n98-magerun2, bin/cli, bin/start`
-
-Agent usage pattern:
-
-1. Call `describe_magento_cli_environment`.
-2. Use the returned wrapper path exactly, for example `./bin/magento cache:flush`, `./bin/n98-magerun2 sys:info`, or `./bin/start`.
-3. Keep Magento code edits and generators under the configured Magento root.
-4. If the tool reports a wrapper outside that root, still run it from the returned project-relative path; that is valid for nested Magento roots.
-5. Prefer the wrapper over global binaries because these scripts often enter Docker containers or a project-specific runtime.
+The `magento-magerun` skill guides runtime investigation using the project's discovered Magerun and Magento CLI environment, including configuration, database, cron, indexing, and application diagnostics. Install it with `skills: ["magento-magerun"]`; command availability depends on the installed Magerun version and runtime.
 
 ## Setting up development environment
+
+See [AGENTS.md](AGENTS.md) for repository policies and development skills. Feature priorities follow the existing project roadmap.
 
 1. Check out this repository.
 1. Open the project in IntelliJ IDEA.
 1. Make sure that you are on the latest develop branch (for example `5.4.0-develop`).
 1. Import the Gradle project from `build.gradle.kts`.
-1. Use **JDK 21** for both the project SDK and the Gradle JVM:
+1. Use **JDK 25** for both the project SDK and the Gradle JVM:
     - `Right click on the project root > Open Module Settings > Project > Project SDK`
     - `IntelliJ IDEA > Preferences > Build, Execution, Deployment > Build Tools > Gradle > Gradle JVM`
 1. In the Gradle tool window, run `Tasks > Intellij platform > runIde`.
 1. The task launches a PhpStorm sandbox with the plugin installed. Make sure the plugin is enabled and indexing is finished before testing features.
 
-## Support for this fork
+To run `./gradlew test`, also install PHP CLI and add `php` (`php.exe` on Windows) to `PATH`. The run-configuration tests launch PHP to verify interpreter settings and command arguments. CI installs PHP 8.4 on Linux, Windows, and macOS.
 
-Report problems with this repository’s changes in [VitaliyBoyko/magento2-phpstorm-plugin issues](https://github.com/VitaliyBoyko/magento2-phpstorm-plugin/issues). Include the IDE build, plugin version, Magento root configuration and a minimal reproduction. The upstream contribution links below refer to the original Magento project.
+Run `./gradlew mcpE2eTest` for the MCP HTTP suite. It starts the real JetBrains MCP server in a headless IDE test application and makes deterministic API calls using local PHP/release fixtures. No AI Assistant or Docker is required. See [MCP HTTP end-to-end tests](.github/CONTRIBUTING.md#mcp-http-end-to-end-tests) for coverage and commands.
 
 ## How to contribute
 1) Start with looking into [Community Backlog](https://github.com/magento/magento2-phpstorm-plugin/issues?q=is%3Aissue%20state%3Aopen%20label%3A%22good%20first%20issue%22). Any ticket in `Ready for Development` and `Good First Issue` columns are a good candidates to start.
@@ -201,23 +173,3 @@ declare(strict_types=1);
 Each Magento source file included in this distribution is licensed under OSL-3.0 license.
 
 Please read the [LICENSE.txt](https://github.com/magento/magento2-phpstorm-plugin/blob/5.4.0-develop/LICENSE.txt) for the full text of the [Open Software License v. 3.0 (OSL-3.0)](http://opensource.org/licenses/osl-3.0.php).
-
-## FAQ
-
-### Why are Magento MCP tools unavailable?
-
-Enable Magento support for the project, finish indexing, and enable the IDE MCP server. Connect your assistant to that server. The tools use the currently opened IDE project; check its Magento root before requesting generation. See [MCP tools](#mcp-tools).
-
-### How do I start with an indexed Magento project?
-
-Ask the connected assistant: “Get the Magento root, find the Magento_Catalog module, and describe the Magento CLI environment.” These map to `get_magento_root_path`, `find_magento_module`, and `describe_magento_cli_environment`. Review the returned paths before using code generators.
-
-### Can I use Docker command wrappers?
-
-Yes. Configure the [MCP CLI wrapper candidates](#mcp-cli-wrapper-configuration), then use the paths returned by `describe_magento_cli_environment`. This supports nested Magento roots and project-local tools.
-
-## Related Magento development tools
-
-- [MageLens](https://github.com/VitaliyBoyko/MageLens): local Docker Magento environment with PHP, JavaScript and template coverage from Cypress or Playwright tests.
-- [Magento Seq](https://github.com/VitaliyBoyko/magento-seq): forward local Magento logs and custom events to Seq.
-- [Seq MCP](https://github.com/VitaliyBoyko/seq-intellij-mcp): query Seq logs from a compatible JetBrains IDE through MCP. It is a separate plugin with its own IDE requirements.

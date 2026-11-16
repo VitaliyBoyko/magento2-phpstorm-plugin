@@ -4,6 +4,9 @@ import com.intellij.testFramework.IndexingTestUtil
 import com.intellij.testFramework.PlatformTestUtil
 import com.magento.idea.magento2plugin.BaseProjectTestCase
 import com.magento.idea.magento2plugin.project.Settings
+import java.nio.file.Files
+import java.nio.file.Path
+import java.util.Comparator
 import org.junit.Test
 
 class MagentoMcpQueriesTest : BaseProjectTestCase() {
@@ -226,12 +229,11 @@ class MagentoMcpQueriesTest : BaseProjectTestCase() {
 
     @Test
     fun testDescribeCliEnvironmentDetectsMagentoAndMagerunWrappers() {
+        resetCliEnvironment()
         val nestedMagentoRoot = configureNestedMagentoRoot()
         Settings.getInstance(project).mcpCliToolCandidates = "bin/magento, bin/n98-magerun2"
-        myFixture.addFileToProject("bin/magento", "#!/usr/bin/env bash\n")
-        myFixture.addFileToProject("bin/n98-magerun2", "#!/usr/bin/env bash\n")
-        PlatformTestUtil.dispatchAllEventsInIdeEventQueue()
-        IndexingTestUtil.waitUntilIndexesAreReady(project)
+        writeProjectFile("bin/magento", "#!/usr/bin/env bash\n")
+        writeProjectFile("bin/n98-magerun2", "#!/usr/bin/env bash\n")
 
         val result = MagentoCliToolQueries.describeCliEnvironment(project)
 
@@ -242,25 +244,25 @@ class MagentoMcpQueriesTest : BaseProjectTestCase() {
         assertContains(result, "location: outside configured Magento root `./$nestedMagentoRoot`")
         assertContains(result, "example: ./bin/magento cache:flush")
         assertContains(result, "./bin/n98-magerun2")
-        assertContains(result, "example: ./bin/n98-magerun2 sys:info")
-        assertContains(result, "Known n98-magerun capability groups:")
-        assertContains(result, "admin: Commands for managing Magento admin user accounts and related settings.")
-        assertContains(result, "examples: admin:user:list, admin:user:create, admin:user:change-password, admin:notifications")
-        assertContains(result, "sys: Commands for system-level information, checks, and maintenance tasks.")
-        assertContains(result, "This is a built-in capability snapshot.")
+        assertContains(result, "n98-magerun2 candidate (version unverified)")
+        assertContains(result, "n98-magerun capabilities are not probed during environment discovery.")
+        assertContains(result, "Use magento_magerun mode=status")
+        assertContains(result, "Optional bundled magento-magerun skill")
+        assertContains(result, "installation returns an AGENTS.md link")
+        assertDoesNotContain(result, "Known n98-magerun capability groups:")
+        assertDoesNotContain(result, "example: ./bin/n98-magerun2")
         assertContains(result, "Create and edit Magento files under `./$nestedMagentoRoot`; that is the configured Magento root.")
         assertContains(result, "If a detected wrapper is outside `./$nestedMagentoRoot`, that is valid for a nested Magento root.")
-        assertContains(result, "For exact n98 command discovery, follow up with the detected wrapper and `list` or a targeted `--help` call such as `sys:info --help`.")
+        assertContains(result, "Use magento_magerun for bounded metadata probes through the selected runtime")
         assertContains(result, "Mark Shust Docker projects usually route these wrappers into containers")
     }
 
     @Test
     fun testDescribeCliEnvironmentDoesNotAddOutsideRootGuidanceForWrapperInsideMagentoRoot() {
+        resetCliEnvironment()
         val nestedMagentoRoot = configureNestedMagentoRoot()
         Settings.getInstance(project).mcpCliToolCandidates = "$nestedMagentoRoot/bin/magento"
-        myFixture.addFileToProject("$nestedMagentoRoot/bin/magento", "#!/usr/bin/env bash\n")
-        PlatformTestUtil.dispatchAllEventsInIdeEventQueue()
-        IndexingTestUtil.waitUntilIndexesAreReady(project)
+        writeProjectFile("$nestedMagentoRoot/bin/magento", "#!/usr/bin/env bash\n")
 
         val result = MagentoCliToolQueries.describeCliEnvironment(project)
 
@@ -272,11 +274,10 @@ class MagentoMcpQueriesTest : BaseProjectTestCase() {
 
     @Test
     fun testDescribeCliEnvironmentUsesConfiguredCandidateOrder() {
+        resetCliEnvironment()
         Settings.getInstance(project).mcpCliToolCandidates = "bin/n98-magerun2, bin/magento"
-        myFixture.addFileToProject("bin/magento", "#!/usr/bin/env bash\n")
-        myFixture.addFileToProject("bin/n98-magerun2", "#!/usr/bin/env bash\n")
-        PlatformTestUtil.dispatchAllEventsInIdeEventQueue()
-        IndexingTestUtil.waitUntilIndexesAreReady(project)
+        writeProjectFile("bin/magento", "#!/usr/bin/env bash\n")
+        writeProjectFile("bin/n98-magerun2", "#!/usr/bin/env bash\n")
 
         val result = MagentoCliToolQueries.describeCliEnvironment(project)
         val magerunIndex = result.indexOf("./bin/n98-magerun2")
@@ -287,10 +288,9 @@ class MagentoMcpQueriesTest : BaseProjectTestCase() {
 
     @Test
     fun testDescribeCliEnvironmentDetectsDirectBinChildrenOutsideConfiguredCandidates() {
+        resetCliEnvironment()
         Settings.getInstance(project).mcpCliToolCandidates = "bin/magento"
-        myFixture.addFileToProject("bin/start", "#!/usr/bin/env bash\n")
-        PlatformTestUtil.dispatchAllEventsInIdeEventQueue()
-        IndexingTestUtil.waitUntilIndexesAreReady(project)
+        writeProjectFile("bin/start", "#!/usr/bin/env bash\n")
 
         val result = MagentoCliToolQueries.describeCliEnvironment(project)
 
@@ -303,10 +303,9 @@ class MagentoMcpQueriesTest : BaseProjectTestCase() {
 
     @Test
     fun testDescribeCliEnvironmentIncludesGruntStyleRebuildGuidance() {
+        resetCliEnvironment()
         Settings.getInstance(project).mcpCliToolCandidates = "bin/grunt"
-        myFixture.addFileToProject("bin/grunt", "#!/usr/bin/env bash\n")
-        PlatformTestUtil.dispatchAllEventsInIdeEventQueue()
-        IndexingTestUtil.waitUntilIndexesAreReady(project)
+        writeProjectFile("bin/grunt", "#!/usr/bin/env bash\n")
 
         val result = MagentoCliToolQueries.describeCliEnvironment(project)
 
@@ -319,6 +318,7 @@ class MagentoMcpQueriesTest : BaseProjectTestCase() {
 
     @Test
     fun testDescribeCliEnvironmentIncludesStartWrapperWhenManyProjectWrappersExist() {
+        resetCliEnvironment()
         val wrappers = listOf(
             "magento",
             "n98-magerun2",
@@ -343,16 +343,151 @@ class MagentoMcpQueriesTest : BaseProjectTestCase() {
             "start"
         )
         Settings.getInstance(project).mcpCliToolCandidates = wrappers.joinToString(", ") { "bin/$it" }
+        writeProjectFile("bin/start", "#!/usr/bin/env bash\n")
 
         val result = MagentoCliToolQueries.describeCliEnvironment(project)
 
-        assertContains(result, "Configured wrappers:")
+        assertContains(result, "Detected wrappers:")
         assertContains(result, "./bin/start")
         assertContains(result, "use: Use this to start the local project environment or stack when needed.")
         assertContains(
             result,
             "Call this tool before running shell commands that normally use Magento, n98-magerun, or project environment wrappers such as `./bin/start`, `./bin/stop`, or `./bin/restart`."
         )
+    }
+
+    @Test
+    fun testDescribeCliEnvironmentDoesNotReportNonexistentConfiguredCandidates() {
+        resetCliEnvironment()
+        Settings.getInstance(project).mcpCliToolCandidates = "bin/magento, bin/php, bin/n98-magerun2"
+        writeProjectFile("bin/magento", "#!/usr/bin/env bash\n")
+
+        val result = MagentoCliToolQueries.describeCliEnvironment(project)
+
+        assertContains(result, "Detected wrappers:")
+        assertContains(result, "./bin/magento")
+        assertDoesNotContain(result, "./bin/php")
+        assertDoesNotContain(result, "Configured wrappers:")
+        assertDoesNotContain(result, "existence could not be verified")
+        assertDoesNotContain(result, "Optional bundled magento-magerun skill")
+    }
+
+    @Test
+    fun testDescribeCliEnvironmentPrefersDockerWrapperAndMarksMagentoFallback() {
+        resetCliEnvironment()
+        configureNestedMagentoRoot()
+        Settings.getInstance(project).mcpCliToolCandidates = "nested/bin/magento, bin/magento"
+        writeProjectFile("bin/magento", "#!/usr/bin/env bash\n")
+        writeProjectFile("nested/bin/magento", "#!/usr/bin/env php\n")
+
+        val result = MagentoCliToolQueries.describeCliEnvironment(project)
+
+        assertContains(result, "Search roots: ., nested")
+        assertContains(result, "./bin/magento\n  type: Magento CLI wrapper\n  selection: preferred")
+        assertContains(result, "./nested/bin/magento\n  type: Magento CLI wrapper\n  selection: fallback for ./bin/magento")
+        assertContains(result, "working directory: ${projectRootPath()}")
+        assertContains(result, "working directory: ${projectRootPath().resolve("nested")}")
+    }
+
+    @Test
+    fun testDescribeCliEnvironmentFindsDockerBesideDeeperMagentoRoot() {
+        resetCliEnvironment()
+        Settings.getInstance(project).magentoPath = "nested/shop/src"
+        Settings.getInstance(project).mcpCliToolCandidates = "bin/magento"
+        writeProjectFile("nested/shop/compose.yaml", "services: {}\n")
+        writeProjectFile("nested/shop/bin/magento", "#!/usr/bin/env bash\n")
+        writeProjectFile("nested/shop/src/bin/magento", "#!/usr/bin/env php\n")
+        writeProjectFile("bin/magento", "#!/usr/bin/env bash\n")
+
+        val result = MagentoCliToolQueries.describeCliEnvironment(project)
+
+        assertContains(result, "Search roots: nested/shop, nested/shop/src")
+        assertContains(result, "./nested/shop/bin/magento\n  type: Magento CLI wrapper\n  selection: preferred")
+        assertContains(result, "selection: fallback for ./nested/shop/bin/magento")
+        assertContains(result, "working directory: ${projectRootPath().resolve("nested/shop")}")
+        assertContains(result, "example: ./bin/magento cache:flush")
+        assertDoesNotContain(result, "\n./bin/magento\n")
+    }
+
+    @Test
+    fun testDescribeCliEnvironmentUsesMagentoDirectoryWithoutDocker() {
+        resetCliEnvironment()
+        Settings.getInstance(project).magentoPath = "nested"
+        Settings.getInstance(project).mcpCliToolCandidates = "bin/magento"
+        writeProjectFile("bin/magento", "#!/usr/bin/env bash\n")
+        writeProjectFile("nested/bin/magento", "#!/usr/bin/env php\n")
+
+        val result = MagentoCliToolQueries.describeCliEnvironment(project)
+
+        assertContains(result, "Search roots: nested\n")
+        assertContains(result, "./nested/bin/magento\n  type: Magento CLI wrapper\n  selection: preferred")
+        assertDoesNotContain(result, "\n./bin/magento\n")
+    }
+
+    @Test
+    fun testDescribeCliEnvironmentUsesMagentoFallbackWhenDockerWrapperIsMissing() {
+        resetCliEnvironment()
+        configureNestedMagentoRoot()
+        Settings.getInstance(project).mcpCliToolCandidates = "bin/magento"
+        writeProjectFile("bin/start", "#!/usr/bin/env bash\n")
+        writeProjectFile("nested/bin/magento", "#!/usr/bin/env php\n")
+
+        val result = MagentoCliToolQueries.describeCliEnvironment(project)
+
+        assertContains(result, "./nested/bin/magento\n  type: Magento CLI wrapper\n  selection: preferred")
+        assertDoesNotContain(result, "selection: fallback for ./bin/magento")
+    }
+
+    @Test
+    fun testDescribeCliEnvironmentKeepsMagentoFallbackAheadOfUnrelatedScripts() {
+        resetCliEnvironment()
+        configureNestedMagentoRoot()
+        Settings.getInstance(project).mcpCliToolCandidates = "bin/magento"
+        repeat(105) { writeProjectFile("bin/utility$it", "#!/usr/bin/env bash\n") }
+        writeProjectFile("bin/magento", "#!/usr/bin/env bash\n")
+        writeProjectFile("nested/bin/magento", "#!/usr/bin/env php\n")
+
+        val result = MagentoCliToolQueries.describeCliEnvironment(project)
+
+        assertContains(result, "selection: fallback for ./bin/magento")
+        assertContains(result, "7 additional scripts omitted.")
+    }
+
+    @Test
+    fun testDescribeCliEnvironmentSkipsNonExecutableFilesAndDoesNotInventHelp() {
+        resetCliEnvironment()
+        Settings.getInstance(project).mcpCliToolCandidates = "bin/magento"
+        writeProjectFile("bin/common", "#!/usr/bin/env bash\n")
+        val common = projectRootPath().resolve("bin/common")
+        val supportsPosixPermissions = Files.getFileStore(common).supportsFileAttributeView("posix")
+        if (supportsPosixPermissions) {
+            assertTrue(common.toFile().setExecutable(false, false))
+        }
+        writeProjectFile("bin/.htaccess", "Require all denied\n")
+        writeProjectFile("bin/removeall", "#!/usr/bin/env bash\n")
+        writeProjectFile("bin/magento", "#!/usr/bin/env php\n")
+
+        val result = MagentoCliToolQueries.describeCliEnvironment(project)
+
+        if (supportsPosixPermissions) {
+            assertDoesNotContain(result, "./bin/common")
+        }
+        assertDoesNotContain(result, "./bin/.htaccess")
+        assertContains(result, "./bin/removeall")
+        assertDoesNotContain(result, "example: ./bin/removeall")
+    }
+
+    @Test
+    fun testDescribeCliEnvironmentQuotesInvocationAndPreservesConfiguredPaths() {
+        resetCliEnvironment()
+        Settings.getInstance(project).magentoPath = "nested"
+        Settings.getInstance(project).mcpCliToolCandidates = "nested/tools with spaces/magento"
+        writeProjectFile("nested/tools with spaces/magento", "#!/usr/bin/env bash\n")
+
+        val result = MagentoCliToolQueries.describeCliEnvironment(project)
+
+        assertContains(result, "./nested/tools with spaces/magento")
+        assertContains(result, "example: './tools with spaces/magento' cache:flush")
     }
 
     private fun assertContains(text: String, expected: String) {
@@ -370,8 +505,40 @@ class MagentoMcpQueriesTest : BaseProjectTestCase() {
 
     private fun configureNestedMagentoRoot(): String {
         val nestedMagentoRoot = "nested"
-        myFixture.addFileToProject("$nestedMagentoRoot/app/etc/di.xml", "<config/>\n")
+        writeProjectFile("$nestedMagentoRoot/app/etc/di.xml", "<config/>\n")
+        writeProjectFile("compose.yaml", "services: {}\n")
         Settings.getInstance(project).magentoPath = nestedMagentoRoot
         return nestedMagentoRoot
+    }
+
+    private fun resetCliEnvironment() {
+        deleteProjectPath("bin")
+        deleteProjectPath("nested")
+        deleteProjectPath("compose.yaml")
+        Settings.getInstance(project).magentoPath = ""
+    }
+
+    private fun deleteProjectPath(relativePath: String) {
+        val projectRoot = projectRootPath()
+        val path = projectRoot.resolve(relativePath).normalize()
+        if (!path.startsWith(projectRoot) || !Files.exists(path)) {
+            return
+        }
+
+        Files.walk(path).use { paths ->
+            paths.sorted(Comparator.reverseOrder()).forEach { Files.deleteIfExists(it) }
+        }
+    }
+
+    private fun writeProjectFile(relativePath: String, content: String) {
+        val file = projectRootPath().resolve(relativePath).normalize()
+        Files.createDirectories(file.parent)
+        Files.writeString(file, content)
+        assertTrue("Cannot make test wrapper executable: $file", file.toFile().setExecutable(true))
+    }
+
+    private fun projectRootPath(): Path {
+        val projectBasePath = project.basePath ?: error("Project base path is not available.")
+        return Path.of(projectBasePath).toAbsolutePath().normalize()
     }
 }

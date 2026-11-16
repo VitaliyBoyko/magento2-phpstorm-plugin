@@ -41,6 +41,7 @@ import com.magento.idea.magento2plugin.actions.generation.util.GenerationContext
 import com.magento.idea.magento2plugin.magento.files.ControllerBackendPhp;
 import com.magento.idea.magento2plugin.magento.files.DataModelFile;
 import com.magento.idea.magento2plugin.magento.files.DataModelInterfaceFile;
+import com.magento.idea.magento2plugin.magento.files.FormButtonBlockFile;
 import com.magento.idea.magento2plugin.magento.files.ModuleMenuXml;
 import com.magento.idea.magento2plugin.magento.files.actions.NewActionFile;
 import com.magento.idea.magento2plugin.magento.packages.File;
@@ -360,6 +361,10 @@ public class NewEntityDialog extends AbstractDialog {
      * Perform code generation using input data.
      */
     protected void onWriteActionOK() {
+        if (propertyTable.isEditing()) {
+            propertyTable.getCellEditor().stopCellEditing();
+        }
+
         formatProperties();
 
         final NewEntityDialogData dialogData = getNewEntityDialogData();
@@ -509,6 +514,23 @@ public class NewEntityDialog extends AbstractDialog {
                 namespaceBuilderSave.getClassFqn()
         ));
 
+        final NamespaceBuilder namespaceBuilderSaveAndContinue = new NamespaceBuilder(
+                moduleName,
+                "SaveAndContinue",
+                directory
+        );
+        buttons.add(new UiComponentFormButtonData(
+                directory,
+                "SaveAndContinue",
+                moduleName,
+                FormButtonBlockFile.TYPE_SAVE_AND_CONTINUE,
+                namespaceBuilderSaveAndContinue.getNamespace(),
+                "Save and Continue Edit",
+                "15",
+                getFormName(),
+                namespaceBuilderSaveAndContinue.getClassFqn()
+        ));
+
         final NamespaceBuilder namespaceBuilderBack = new NamespaceBuilder(
                 moduleName,
                 "Back",
@@ -568,22 +590,21 @@ public class NewEntityDialog extends AbstractDialog {
 
         for (int count = 0; count < model.getRowCount(); count++) {
 
-            final String name = model.getValueAt(count, 0).toString();
-            final String dataType = model.getValueAt(count, 1).toString();
+            final String name = getTrimmedTableValue(model, count, 0);
+            final String dataType = getTrimmedTableValue(model, count, 1);
 
-            final String label = Arrays.stream(name.split("_")).map(
-                    string -> string.substring(0, 1).toUpperCase(Locale.getDefault())
-                            + string.substring(1)).collect(Collectors.joining(" ")
-            );
+            if (name.isEmpty() || dataType.isEmpty()) {
+                continue;
+            }
+            final String label = formatSnakeCaseLabel(name);
             final String sortOrder = String.valueOf(count).concat("0");
             final String fieldset = "general";
 
-            final PropertiesTypes property =
-                    PropertiesTypes.getByValue(model.getValueAt(count, 1).toString());
+            final PropertiesTypes property = PropertiesTypes.getByValue(dataType);
             final String formElementType =
                     FormElementType.getDefaultForProperty(property).getType();
 
-            final String source = model.getValueAt(count, 0).toString(); //todo: convert
+            final String source = name; //todo: convert
 
             final UiComponentFormFieldData fieldsetData = new UiComponentFormFieldData(//NOPMD
                     name,
@@ -644,10 +665,7 @@ public class NewEntityDialog extends AbstractDialog {
             return;
         }
         final String entityName = CamelCaseToSnakeCase.getInstance().convert(entityNameValue);
-        final String entityNameLabel = Arrays.stream(entityName.split("_")).map(
-                string -> string.substring(0, 1).toUpperCase(Locale.getDefault())
-                        + string.substring(1)
-        ).collect(Collectors.joining(" "));
+        final String entityNameLabel = formatSnakeCaseLabel(entityName);
 
         dbTableName.setText(entityName);
         entityId.setText(entityName.concat("_id"));
@@ -655,10 +673,39 @@ public class NewEntityDialog extends AbstractDialog {
         formLabel.setText(entityNameLabel.concat(" Form"));
         formName.setText(entityName.concat("_form"));
         gridName.setText(entityName.concat("_listing"));
-        acl.setText(moduleName.concat("::management"));
+        acl.setText(formatManagementIdentifier(moduleName, entityName));
         aclTitle.setText(entityNameLabel.concat(" Management"));
-        menuIdentifier.setText(moduleName.concat("::management"));
+        menuIdentifier.setText(formatManagementIdentifier(moduleName, entityName));
         menuTitle.setText(entityNameLabel.concat(" Management"));
+    }
+
+    static String formatManagementIdentifier(final String moduleName, final String entityName) {
+        return moduleName + "::" + entityName + "_management";
+    }
+
+    static String formatSnakeCaseLabel(final String value) {
+        return Arrays.stream(value.split("_"))
+                .filter(string -> !string.isEmpty())
+                .map(NewEntityDialog::capitalizeLabelPart)
+                .collect(Collectors.joining(" "));
+    }
+
+    private static String capitalizeLabelPart(final String value) {
+        return value.substring(0, 1).toUpperCase(Locale.getDefault()) + value.substring(1);
+    }
+
+    private static String getTrimmedTableValue(
+            final DefaultTableModel model,
+            final int row,
+            final int column
+    ) {
+        final Object value = model.getValueAt(row, column);
+
+        if (value == null) {
+            return "";
+        }
+
+        return value.toString().trim();
     }
 
     /**

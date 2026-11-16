@@ -5,7 +5,10 @@
 
 import org.jetbrains.changelog.Changelog
 import org.jetbrains.changelog.markdownToHTML
+import org.jetbrains.intellij.platform.gradle.IntelliJPlatformType
 import org.jetbrains.intellij.platform.gradle.TestFrameworkType
+import org.jetbrains.intellij.platform.gradle.tasks.VerifyPluginTask
+import org.jetbrains.intellij.platform.gradle.tasks.ComposedJarTask
 import org.gradle.api.tasks.testing.TestDescriptor
 import org.gradle.api.tasks.testing.TestResult
 import org.gradle.api.tasks.testing.TestListener
@@ -40,7 +43,7 @@ val effectivePluginVersion = providers.provider {
 version = effectivePluginVersion.get()
 
 kotlin {
-    jvmToolchain(21)
+    jvmToolchain(25)
 }
 
 repositories {
@@ -51,13 +54,71 @@ repositories {
     }
 }
 
+subprojects {
+    apply(plugin = "org.jetbrains.intellij.platform.module")
+    group = rootProject.group
+    version = rootProject.version
+
+    repositories {
+        mavenCentral()
+        intellijPlatform { defaultRepositories() }
+    }
+
+    extensions.configure<JavaPluginExtension> {
+        toolchain.languageVersion = JavaLanguageVersion.of(25)
+    }
+    tasks.named<ComposedJarTask>("composedJar") {
+        archiveBaseName = "${project.group}.${project.name.replace('-', '.')}"
+    }
+}
+
+project(":mcp-skills") {
+    dependencies {
+        compileOnly(rootProject)
+        intellijPlatform {
+            val platformLocalPath = providers.gradleProperty("platformLocalPath")
+            if (platformLocalPath.isPresent) {
+                local(platformLocalPath)
+            } else {
+                create(providers.gradleProperty("platformType"), providers.gradleProperty("platformVersion"))
+            }
+            bundledPlugin("com.intellij.mcpServer")
+        }
+    }
+}
+
+sourceSets {
+    create("uiTest") {
+        compileClasspath += sourceSets.main.get().output
+        runtimeClasspath += sourceSets.main.get().output
+    }
+}
+
+val uiTestImplementation = configurations.getByName("uiTestImplementation") {
+    extendsFrom(configurations.testImplementation.get())
+}
+val uiTestRuntimeOnly = configurations.getByName("uiTestRuntimeOnly") {
+    extendsFrom(configurations.testRuntimeOnly.get())
+}
+
 dependencies {
-    testImplementation("junit:junit:4.13.2")
-    testCompileOnly("org.junit.jupiter:junit-jupiter-api:5.13.4")
-    testRuntimeOnly("org.junit.vintage:junit-vintage-engine:5.13.4")
+    runtimeOnly(project(":mcp-skills"))
+    runtimeOnly(project(":php-mcp"))
+    runtimeOnly(project(":php-graphql"))
+
+    testImplementation(platform(libs.junit.bom))
+    testImplementation(libs.junit4)
+    testCompileOnly(libs.junit.jupiter.api)
+    testRuntimeOnly(libs.junit.vintage.engine)
+    testRuntimeOnly(libs.junit.platform.launcher)
 
     intellijPlatform {
-        create(providers.gradleProperty("platformType"), providers.gradleProperty("platformVersion"))
+        val platformLocalPath = providers.gradleProperty("platformLocalPath")
+        if (platformLocalPath.isPresent) {
+            local(platformLocalPath)
+        } else {
+            create(providers.gradleProperty("platformType"), providers.gradleProperty("platformVersion"))
+        }
 
         bundledPlugins(providers.gradleProperty("platformBundledPlugins").map { it.split(',') })
         plugins(providers.gradleProperty("platformPlugins").map { it.split(',') })
@@ -67,13 +128,29 @@ dependencies {
         testFramework(TestFrameworkType.JUnit5)
     }
 
-    implementation("org.json:json:20171018")
-    implementation("org.codehaus.plexus:plexus-utils:3.5.1")
+    uiTestImplementation(platform(libs.junit.bom))
+    uiTestImplementation(libs.junit.jupiter)
+    uiTestImplementation(libs.kodein.di)
+    uiTestImplementation(libs.kotlinx.coroutines.core)
+    uiTestRuntimeOnly(libs.junit.jupiter.engine)
+    uiTestRuntimeOnly(kotlin("stdlib"))
+    uiTestRuntimeOnly(kotlin("reflect"))
+    uiTestRuntimeOnly(libs.teamcity.serviceMessages)
+
+    implementation(libs.json)
+    implementation(libs.plexus.utils)
 }
 
 intellijPlatform {
     pluginConfiguration {
+        id = providers.gradleProperty("pluginGroup")
+        name = providers.gradleProperty("pluginName")
         version = effectivePluginVersion
+
+        vendor {
+            name = "Magento Inc."
+            url = providers.gradleProperty("pluginRepositoryUrl")
+        }
 
         description = providers.fileContents(layout.projectDirectory.file("README.md")).asText.map {
             val start = "<!-- Plugin description -->"
@@ -101,7 +178,6 @@ intellijPlatform {
 
         ideaVersion {
             sinceBuild = providers.gradleProperty("pluginSinceBuild")
-            untilBuild = providers.gradleProperty("pluginUntilBuild")
         }
     }
 
@@ -114,13 +190,25 @@ intellijPlatform {
     publishing {
         token = providers.environmentVariable("MAGENTO_PHPSTORM_intellijPublishToken")
         channels = effectivePluginVersion.map {
-            listOf(it.substringAfter('-', "").substringBefore('.').ifEmpty { "default" })
+            listOf(it.replace(Regex("-p\\d+(?=-|$)"), "").substringAfter('-', "").substringBefore('.').ifEmpty { "default" })
         }
     }
 
     pluginVerification {
+        // Verifier scans the optional bundled-skills module even on builds that skip loading it.
+        ignoredProblemsFile = layout.projectDirectory.file("gradle/plugin-verifier-ignored-problems.txt")
+        // Experimental API use is checked against the specific exceptions in verifyPlugin below.
+        failureLevel = VerifyPluginTask.FailureLevel.ALL - setOf(
+            VerifyPluginTask.FailureLevel.NOT_DYNAMIC,
+            VerifyPluginTask.FailureLevel.EXPERIMENTAL_API_USAGES,
+        )
         ides {
-            recommended()
+            // Use IDE distributions containing the October 2026 eMudhra security fixes.
+            create(IntelliJPlatformType.PhpStorm, providers.gradleProperty("platformVersion").get())
+            if (providers.gradleProperty("verifyWebStorm").map(String::toBoolean).getOrElse(false)) {
+                create(IntelliJPlatformType.WebStorm, providers.gradleProperty("uiTestPlatformVersion").get())
+                create(IntelliJPlatformType.WebStorm, "2026.3")
+            }
         }
     }
 }
@@ -141,6 +229,44 @@ kover {
 }
 
 tasks {
+    named<VerifyPluginTask>("verifyPlugin") {
+        maxHeapSize = "2g"
+        systemProperty("intellij.plugin.verifier.concurrency.level", "1")
+
+        doLast {
+            val provider = "com.magento.idea.magento2plugin.mcp.MagentoBundledSkillsProvider"
+            val skillsApi = setOf(
+                "com.intellij.mcpserver.skills.BundledSkill",
+                "com.intellij.mcpserver.skills.BundledSkillsProvider",
+                "com.intellij.mcpserver.skills.AgentSkillTarget",
+            )
+            val externalReferenceHost = "Experimental API interface com.intellij.model.psi.PsiExternalReferenceHost is referenced in "
+            val sdkPsiClasses = setOf("com.intellij.psi.xml.XmlAttribute", "com.intellij.psi.xml.XmlNamedReferenceHost",
+                "com.intellij.lang.javascript.psi.JSProperty")
+            val unexpected = verificationReportsDirectory.get().asFile.walkTopDown()
+                .filter { it.name == "experimental-api-usages.txt" }
+                .flatMap { it.readLines().asSequence() }
+                .filter { it.isNotBlank() }
+                .filterNot { warning ->
+                    // The provider is optional and loaded only with JetBrains' bundled skills module.
+                    warning.startsWith("Experimental API ") && provider in warning && skillsApi.any { it in warning } ||
+                        // The stable SDK reports these references within its own PSI classes.
+                        sdkPsiClasses.any { warning.startsWith("$externalReferenceHost$it.") }
+                }
+                .distinct()
+                .toList()
+            check(unexpected.isEmpty()) {
+                "Unexpected experimental API usage:\n${unexpected.joinToString("\n")}"
+            }
+        }
+    }
+
+    processResources {
+        from(layout.projectDirectory.dir("skills")) {
+            into("skills")
+        }
+    }
+
     wrapper {
         gradleVersion = providers.gradleProperty("gradleVersion").get()
     }
@@ -150,6 +276,10 @@ tasks {
     }
 
     test {
+        // Keep routine tests offline; enable the real-release MCP test explicitly.
+        if (providers.environmentVariable("MAGENTO_MCP_REAL_RELEASE_TEST").orNull != "true") {
+            filter.excludeTestsMatching("com.magento.idea.magento2plugin.mcp.MagentoCompatibilityCommandsTest.testHttpMcpWithActualMagentoReleases")
+        }
         val excludePatterns = project.findProperty("excludeTests") as String?
 
         if (!excludePatterns.isNullOrEmpty()) {
@@ -187,25 +317,38 @@ tasks {
 
 }
 
-intellijPlatformTesting {
-    runIde {
-        register("runIdeForUiTests") {
-            task {
-                jvmArgumentProviders += CommandLineArgumentProvider {
-                    listOf(
-                        "-Drobot-server.port=8082",
-                        "-Dide.mac.message.dialogs.as.sheets=false",
-                        "-Djb.privacy.policy.text=<!--999.999-->",
-                        "-Djb.consents.confirmation.enabled=false",
-                        "-Deap.require.license=true",
-                        "-Dide.show.tips.on.startup.default.value=false"
-                    )
-                }
-            }
+intellijPlatformTesting.testIdeUi.register("uiTest") {
+    type = IntelliJPlatformType.WebStorm
+    version = providers.gradleProperty("uiTestPlatformVersion")
+    useInstaller = true
 
-            plugins {
-                robotServerPlugin()
+    // Starter and Driver must match the IDE launched by the UI tests.
+    testFramework(TestFrameworkType.Starter)
+    uiTestImplementation.extendsFrom(configurations.getByName("intellijPlatformTestDependencies_uiTest"))
+    // 2.20.0 also adds base-IDE Starter dependencies directly to the source set.
+    // Keep only the WebStorm-matched dependencies inherited from this testing entry.
+    uiTestImplementation.withDependencies {
+        removeIf { dependency ->
+            TestFrameworkType.Starter.coordinates.any {
+                it.groupId == dependency.group && it.artifactId == dependency.name
             }
+        }
+    }
+
+    task {
+        val uiTestSourceSet = sourceSets.getByName("uiTest")
+        testClassesDirs = uiTestSourceSet.output.classesDirs
+        classpath = uiTestSourceSet.runtimeClasspath
+        // The 2026.3 Starter archive extractor uses the platform's NIO filesystem.
+        jvmArgs("--add-exports=java.base/sun.nio.fs=ALL-UNNAMED")
+        systemProperty("path.to.build.plugin", tasks.prepareSandbox.get().pluginDirectory.get().asFile)
+        systemProperty("ui.test.ide.build", providers.gradleProperty("uiTestPlatformVersion").get())
+        useJUnitPlatform()
+        dependsOn(tasks.prepareSandbox)
+
+        testLogging {
+            events("passed", "skipped", "failed")
+            showStandardStreams = true
         }
     }
 }
@@ -215,5 +358,30 @@ kover {
         instrumentation {
             excludedClasses.add("org.apache.velocity.*")
         }
+    }
+}
+
+// The same headless IDE runtime as `test`, restricted to the real MCP HTTP contract suites.
+intellijPlatformTesting.testIde.register("mcpE2eTest") {
+    testFramework(TestFrameworkType.Platform)
+    testFramework(TestFrameworkType.JUnit5)
+
+    task {
+        group = "verification"
+        description = "Exercise Magento MCP tools over real localhost HTTP; no AI Assistant or Docker required."
+        classpath += sourceSets.test.get().output
+        useJUnitPlatform()
+        systemProperty("intellij.platform.kernel.disable", "true")
+        systemProperty("ide.fleet.launch", "false")
+        filter {
+            includeTestsMatching("com.magento.idea.magento2plugin.mcp.MagentoMcpHttpTest")
+            includeTestsMatching("com.magento.idea.magento2plugin.mcp.MagentoSkillSetupMcpTest")
+            includeTestsMatching("com.magento.idea.magento2plugin.mcp.MagentoExternalDiscoveryMcpTest")
+            includeTestsMatching("com.magento.idea.magento2plugin.mcp.MagentoCompatibilityCommandsTest")
+            if (providers.environmentVariable("MAGENTO_MCP_REAL_RELEASE_TEST").orNull != "true") {
+                excludeTestsMatching("*.testHttpMcpWithActualMagentoReleases")
+            }
+        }
+        testLogging { events("passed", "skipped", "failed") }
     }
 }

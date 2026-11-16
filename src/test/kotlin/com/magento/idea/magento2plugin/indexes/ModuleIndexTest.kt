@@ -13,21 +13,7 @@ import org.junit.Test
 
 class ModuleIndexTest : BaseProjectTestCase() {
     @Test
-    fun testGetEditableThemeNamesSupportsWindowsStyleMagentoRootFromStoredSettings() {
-        myFixture.addFileToProject(
-            "app/design/frontend/Foo/bar/registration.php",
-            """
-            <?php
-
-            use Magento\Framework\Component\ComponentRegistrar;
-
-            ComponentRegistrar::register(
-                ComponentRegistrar::THEME,
-                'frontend/Foo/bar',
-                __DIR__
-            );
-            """.trimIndent()
-        )
+    fun testGetEditableThemeNamesUsesThemeXmlWithoutRegistrationPhp() {
         myFixture.addFileToProject(
             "app/design/frontend/Foo/bar/theme.xml",
             """
@@ -38,6 +24,63 @@ class ModuleIndexTest : BaseProjectTestCase() {
             </theme>
             """.trimIndent()
         )
+
+        prepareIndexWithWindowsStyleMagentoRoot()
+
+        val moduleIndex = ModuleIndex(project)
+        val themeNames = moduleIndex.editableThemeNames
+
+        assertTrue(
+            "Expected editable theme names to contain frontend/Foo/bar, got: $themeNames",
+            themeNames.contains("frontend/Foo/bar")
+        )
+        assertNotNull(moduleIndex.getThemeDirectoryByThemeName("frontend/Foo/bar"))
+    }
+
+    @Test
+    fun testGetEditableModuleNamesUsesModuleXmlWithoutRegistrationPhp() {
+        myFixture.addFileToProject(
+            "app/code/Foo/XmlOnly/etc/module.xml",
+            """
+            <?xml version="1.0"?>
+            <config xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                    xsi:noNamespaceSchemaLocation="urn:magento:framework:Module/etc/module.xsd">
+                <module name="Foo_XmlOnly"/>
+            </config>
+            """.trimIndent()
+        )
+
+        prepareIndexWithWindowsStyleMagentoRoot()
+
+        val moduleIndex = ModuleIndex(project)
+        val moduleNames = moduleIndex.editableModuleNames
+
+        assertTrue(
+            "Expected editable module names to contain Foo_XmlOnly, got: $moduleNames",
+            moduleNames.contains("Foo_XmlOnly")
+        )
+        assertNotNull(moduleIndex.getModuleDirectoryByModuleName("Foo_XmlOnly"))
+    }
+
+    @Test
+    fun testIndexedModuleLookupPrefersConfiguredRootOverDuplicateAndSiblingRoots() {
+        val declarations = listOf(".runtime", "src-copy", "src").associateWith { directory ->
+            myFixture.addFileToProject(
+                "$directory/vendor/foo/indexed/etc/module.xml",
+                "<config><module name=\"Foo_Indexed\"/></config>"
+            ).virtualFile.parent.parent
+        }
+        PlatformTestUtil.dispatchAllEventsInIdeEventQueue()
+        IndexingTestUtil.waitUntilIndexesAreReady(project)
+
+        val moduleIndex = ModuleIndex(project)
+        for (directory in listOf("src", ".runtime")) {
+            Settings.getInstance(project).magentoPath = myFixture.findFileInTempDir(directory).path
+            assertEquals(declarations.getValue(directory), moduleIndex.getModuleDirectoryVirtualFileByModuleName("Foo_Indexed"))
+        }
+    }
+
+    private fun prepareIndexWithWindowsStyleMagentoRoot() {
         PlatformTestUtil.dispatchAllEventsInIdeEventQueue()
         IndexingTestUtil.waitUntilIndexesAreReady(project)
 
@@ -45,12 +88,5 @@ class ModuleIndexTest : BaseProjectTestCase() {
         val state = settings.state ?: error("Expected settings state to be available")
         state.magentoPath = "\\src"
         settings.loadState(state)
-
-        val themeNames = ModuleIndex(project).editableThemeNames
-
-        assertTrue(
-            "Expected editable theme names to contain frontend/Foo/bar, got: $themeNames",
-            themeNames.contains("frontend/Foo/bar")
-        )
     }
 }

@@ -5,21 +5,86 @@ name: Run automated tests
 
 on:
   pull_request:
-    branches: [ master, '*-develop', 'mainline*' ]
 
 jobs:
+  verify-plugin:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Set up JDK 25
+        uses: actions/setup-java@v6.0.1
+        with:
+          java-version: 25
+          distribution: 'temurin'
+          cache: gradle
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+      - name: Verify PhpStorm and WebStorm compatibility
+        run: ./gradlew verifyPlugin -PverifyWebStorm=true --max-workers=1 --no-parallel --no-daemon --no-configuration-cache
+      - name: Upload Plugin Verifier reports
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: plugin-verifier-reports
+          if-no-files-found: warn
+          retention-days: 14
+          path: build/reports/pluginVerifier/**
+
+  ui-test-webstorm:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Set up JDK 25
+        uses: actions/setup-java@v6.0.1
+        with:
+          java-version: 25
+          distribution: 'temurin'
+          cache: gradle
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+      - name: Cache WebStorm UI test distribution
+        uses: actions/cache@v6.1.0
+        with:
+          path: |
+            out/ide-tests/cache
+            out/ide-tests/installers
+          key: ${{ runner.os }}-webstorm-${{ hashFiles('gradle.properties') }}
+      - name: Run WebStorm UI tests
+        run: xvfb-run --auto-servernum ./gradlew uiTest --no-daemon --no-build-cache --no-configuration-cache
+      - name: Upload UI test failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: webstorm-ui-test-failure-artifacts
+          if-no-files-found: ignore
+          retention-days: 14
+          path: |
+            build/reports/tests/uiTest/**
+            build/test-results/uiTest/**
+            build/idea-sandbox/**/log/**
+            build/idea-sandbox/**/system/log/**
+            out/ide-tests/tests/**
+
   build-linux:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v3
-      - name: Set up JDK 21
-        uses: actions/setup-java@v3
+      - uses: actions/checkout@v7.0.1
+      - name: Set up PHP for process tests
+        uses: shivammathur/setup-php@v2
         with:
-          java-version: 21
+          php-version: '8.4'
+          coverage: none
+          tools: none
+      - name: Set up JDK 25
+        uses: actions/setup-java@v6.0.1
+        with:
+          java-version: 25
           distribution: 'temurin'
           cache: gradle
-      - uses: actions/cache@v3
+      - uses: actions/cache@v6.1.0
         with:
           path: |
             ~/.gradle/caches
@@ -36,14 +101,20 @@ jobs:
     runs-on: windows-latest
 
     steps:
-      - uses: actions/checkout@v3
-      - name: Set up JDK 21
-        uses: actions/setup-java@v3
+      - uses: actions/checkout@v7.0.1
+      - name: Set up PHP for process tests
+        uses: shivammathur/setup-php@v2
         with:
-          java-version: 21
+          php-version: '8.4'
+          coverage: none
+          tools: none
+      - name: Set up JDK 25
+        uses: actions/setup-java@v6.0.1
+        with:
+          java-version: 25
           distribution: 'temurin'
           cache: gradle
-      - uses: actions/cache@v3
+      - uses: actions/cache@v6.1.0
         with:
           path: |
             ~/.gradle/caches
@@ -53,11 +124,25 @@ jobs:
             ${{ runner.os }}-gradle-
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
+      - name: Prepare pinned PhpStorm Windows platform
+        shell: pwsh
+        run: |
+          $properties = Get-Content gradle.properties -Raw | ConvertFrom-StringData
+          $version = $properties.platformVersion
+          $archive = Join-Path $env:RUNNER_TEMP "PhpStorm-$version.win.zip"
+          $destination = Join-Path $env:RUNNER_TEMP "phpstorm-platform"
+          Invoke-WebRequest "https://download.jetbrains.com/webide/PhpStorm-$version.win.zip" -OutFile $archive
+          Expand-Archive -Path $archive -DestinationPath $destination
+          $productInfo = @(Get-ChildItem $destination -Filter product-info.json -Recurse)
+          if ($productInfo.Count -ne 1) {
+            throw "Expected one PhpStorm product-info.json in $destination"
+          }
+          "ORG_GRADLE_PROJECT_platformLocalPath=$($productInfo[0].DirectoryName)" >> $env:GITHUB_ENV
       - name: Run automated tests
-        run: ./gradlew clean test --fail-fast --no-daemon --no-build-cache --no-configuration-cache
+        run: ./gradlew clean test --no-daemon --no-build-cache --no-configuration-cache
       - name: Upload Windows test failure artifacts
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: windows-test-failure-artifacts
           if-no-files-found: ignore
@@ -74,14 +159,20 @@ jobs:
     runs-on: macos-latest
 
     steps:
-      - uses: actions/checkout@v3
-      - name: Set up JDK 21
-        uses: actions/setup-java@v3
+      - uses: actions/checkout@v7.0.1
+      - name: Set up PHP for process tests
+        uses: shivammathur/setup-php@v2
         with:
-          java-version: 21
+          php-version: '8.4'
+          coverage: none
+          tools: none
+      - name: Set up JDK 25
+        uses: actions/setup-java@v6.0.1
+        with:
+          java-version: 25
           distribution: 'temurin'
           cache: gradle
-      - uses: actions/cache@v3
+      - uses: actions/cache@v6.1.0
         with:
           path: |
             ~/.gradle/caches
@@ -98,17 +189,17 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
-      - name: Set up JDK 21
-        uses: actions/setup-java@v4
+      - name: Set up JDK 25
+        uses: actions/setup-java@v6.0.1
         with:
-          java-version: 21
+          java-version: 25
           distribution: 'temurin'
           cache: gradle
       - name: Qodana - Code Quality
-        uses: JetBrains/qodana-action@v2025.3
+        uses: JetBrains/qodana-action@v2026.2.2
         with:
           cache-default-branch-only: true
           use-caches: true

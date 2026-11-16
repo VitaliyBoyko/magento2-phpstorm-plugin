@@ -18,7 +18,7 @@ import java.util.List;
 import org.jetbrains.annotations.NotNull;
 
 @SuppressWarnings("PMD.AvoidSynchronizedAtMethodLevel")
-public final class VersionStateManager {
+public final class VersionStateManager implements UctVersionState {
 
     private static VersionStateManager instance;
     private final DeprecationStateIndex deprecationStateIndex;
@@ -222,7 +222,8 @@ public final class VersionStateManager {
     private String escapeFqn(final @NotNull String fqn) {
         return MagentoTypeEscapeUtil.escape(
                 !fqn.trim().isEmpty() && fqn.trim().charAt(0)
-                        == '\\' ? fqn.trim() : '\\' + fqn.trim()
+                        == '\\' ? fqn.trim() : '\\' + fqn.trim(),
+                existenceStateIndex::isPresentInCodebase
         );
     }
 }

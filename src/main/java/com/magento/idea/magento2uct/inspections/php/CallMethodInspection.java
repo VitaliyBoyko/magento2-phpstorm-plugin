@@ -7,14 +7,20 @@ package com.magento.idea.magento2uct.inspections.php;
 
 import com.intellij.codeInspection.ProblemsHolder;
 import com.intellij.openapi.project.Project;
-import com.intellij.psi.PsiElement;
+import com.intellij.psi.ResolveResult;
+import java.util.Map;
+import java.util.TreeMap;
+import java.util.function.Consumer;
 import com.intellij.psi.PsiElementVisitor;
+import com.jetbrains.php.PhpIndex;
 import com.jetbrains.php.lang.inspections.PhpInspection;
 import com.jetbrains.php.lang.psi.elements.Method;
 import com.jetbrains.php.lang.psi.elements.MethodReference;
+import com.jetbrains.php.lang.psi.elements.PhpClass;
+import com.jetbrains.php.lang.psi.elements.PhpExpression;
 import com.jetbrains.php.lang.psi.visitors.PhpElementVisitor;
 import com.magento.idea.magento2uct.packages.IssueSeverityLevel;
-import com.magento.idea.magento2uct.settings.UctSettingsService;
+import com.magento.idea.magento2uct.inspections.UctAnalysisContext;
 import org.jetbrains.annotations.NotNull;
 
 public abstract class CallMethodInspection extends PhpInspection {
@@ -29,20 +35,73 @@ public abstract class CallMethodInspection extends PhpInspection {
             @Override
             public void visitPhpMethodReference(final MethodReference reference) {
                 final Project project = reference.getProject();
-                final UctSettingsService settings = UctSettingsService.getInstance(project);
 
-                if (!settings.isEnabled()
-                        || !settings.isIssueLevelSatisfiable(getSeverityLevel())) {
+                if (!UctAnalysisContext.isEnabled(problemsHolder)
+                        || !UctAnalysisContext.accepts(problemsHolder, getSeverityLevel())) {
                     return;
                 }
-                final PsiElement resolvedElement = reference.resolve();
-
-                if (!(resolvedElement instanceof Method)) {
+                final Map<String, PhpClass> contracts = new TreeMap<>();
+                final Map<String, Method> methods = receiverMethods(
+                        reference,
+                        contract -> contracts.putIfAbsent(contract.getFQN(), contract)
+                );
+                // A receiver interface without this method is the contract the call breaks;
+                // its implementations are not what the code depends on.
+                if (methods.isEmpty() && !contracts.isEmpty()) {
+                    for (final PhpClass contract : contracts.values()) {
+                        executeMissingInInterface(project, problemsHolder, reference, contract);
+                    }
                     return;
                 }
-                execute(project, problemsHolder, reference, (Method) resolvedElement);
+                // When no receiver declaration is available, retain PHP's polyvariant
+                // resolution (including dynamic/magic calls) instead of choosing one result.
+                if (methods.isEmpty()) {
+                    for (final ResolveResult result : reference.multiResolve(false)) {
+                        if (result.isValidResult() && result.getElement() instanceof Method method) {
+                            methods.putIfAbsent(method.getFQN(), method);
+                        }
+                    }
+                }
+                for (final Method method : methods.values()) {
+                    execute(project, problemsHolder, reference, method);
+                }
             }
         };
+    }
+
+    /**
+     * Inspect the contract on each receiver type. multiResolve also returns interface
+     * implementations and overrides that the call does not depend on (e.g. test loggers).
+     * Keep explicit union/intersection members and inherited declarations in stable order.
+     * Receiver interfaces that do not declare a statically named method go to missingInInterface.
+     */
+    private static Map<String, Method> receiverMethods(
+            final MethodReference reference,
+            final Consumer<PhpClass> missingInInterface
+    ) {
+        final Map<String, Method> methods = new TreeMap<>();
+        final PhpExpression receiver = reference.getClassReference();
+        if (receiver == null) {
+            return methods;
+        }
+        final PhpIndex index = PhpIndex.getInstance(reference.getProject());
+        // $receiver->$name() has no name node: the method is unknown, not missing.
+        final boolean staticName = reference.getNameNode() != null;
+        // getTypes() exposes class names without generic arguments, so '&' only
+        // separates receiver contracts, never types nested inside a generic argument.
+        for (final String type : receiver.getType().global(reference.getProject()).getTypes()) {
+            for (final String member : type.split("&")) {
+                for (final PhpClass phpClass : index.getAnyByFQN(member)) {
+                    final Method method = phpClass.findMethodByName(reference.getName());
+                    if (method != null) {
+                        methods.putIfAbsent(method.getFQN(), method);
+                    } else if (staticName && phpClass.isInterface()) {
+                        missingInInterface.accept(phpClass);
+                    }
+                }
+            }
+        }
+        return methods;
     }
 
     /**
@@ -59,6 +118,22 @@ public abstract class CallMethodInspection extends PhpInspection {
             final MethodReference methodReference,
             final Method method
     );
+
+    /**
+     * Inspect a call to a method that the receiver interface does not declare.
+     *
+     * @param project Project
+     * @param problemsHolder ProblemsHolder
+     * @param methodReference MethodReference
+     * @param contract PhpClass
+     */
+    protected void executeMissingInInterface(
+            final Project project,
+            final @NotNull ProblemsHolder problemsHolder,
+            final MethodReference methodReference,
+            final PhpClass contract
+    ) {
+    }
 
     /**
      * Implement this method to specify issue severity level for target inspection.

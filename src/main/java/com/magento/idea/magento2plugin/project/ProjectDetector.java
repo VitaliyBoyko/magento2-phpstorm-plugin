@@ -18,9 +18,11 @@ import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.platform.DirectoryProjectConfigurator;
 import com.magento.idea.magento2plugin.indexes.IndexManager;
 import com.magento.idea.magento2plugin.magento.packages.MagentoComponentManager;
+import com.magento.idea.magento2plugin.project.indexing.MagentoIndexingExclusionService;
 import com.magento.idea.magento2plugin.project.startup.DeferredProjectOpenActions;
 import com.magento.idea.magento2plugin.util.magento.MagentoBasePathUtil;
 import com.magento.idea.magento2plugin.util.magento.MagentoVersionUtil;
+import com.magento.idea.magento2plugin.updates.MagentoUpdateService;
 import org.jetbrains.annotations.NotNull;
 
 public class ProjectDetector implements DirectoryProjectConfigurator {
@@ -52,6 +54,8 @@ public class ProjectDetector implements DirectoryProjectConfigurator {
                                     project,
                                     project.getBasePath()
                             );
+                            project.getService(MagentoUpdateService.class).checkForUpdates();
+                            MagentoIndexingExclusionService.getInstance(project).applyExclusions();
                             IndexManager.manualReindex();
                             MagentoComponentManager.getInstance(project).flushModules();
                         }));

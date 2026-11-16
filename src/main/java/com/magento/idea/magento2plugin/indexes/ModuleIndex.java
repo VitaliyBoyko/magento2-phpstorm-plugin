@@ -5,30 +5,33 @@
 
 package com.magento.idea.magento2plugin.indexes;
 
-import com.intellij.openapi.vfs.LocalFileSystem;
-import com.intellij.openapi.application.ReadAction;
-import com.intellij.openapi.project.DumbService;
-import com.intellij.openapi.util.io.FileUtil;
+import com.intellij.openapi.application.ApplicationManager;
+import com.intellij.openapi.util.Computable;
+import com.intellij.openapi.project.IndexNotReadyException;
 import com.intellij.openapi.project.Project;
+import com.intellij.openapi.roots.ProjectRootManager;
+import com.intellij.openapi.util.io.FileUtil;
+import com.intellij.openapi.vfs.LocalFileSystem;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.psi.PsiDirectory;
 import com.intellij.psi.PsiManager;
 import com.intellij.psi.search.GlobalSearchScope;
 import com.intellij.util.indexing.FileBasedIndex;
-import com.jetbrains.php.lang.PhpFileType;
+import com.intellij.util.indexing.ID;
 import com.magento.idea.magento2plugin.magento.packages.Package;
 import com.magento.idea.magento2plugin.project.Settings;
-import com.magento.idea.magento2plugin.stubs.indexes.ModuleNameIndex;
-import com.magento.idea.magento2plugin.util.RegExUtil;
+import com.magento.idea.magento2plugin.stubs.indexes.xml.ModuleXmlIndex;
+import com.magento.idea.magento2plugin.stubs.indexes.xml.ThemeXmlIndex;
+import com.magento.idea.magento2plugin.util.magento.IsFileInEditableModuleUtil;
+import org.jetbrains.annotations.Nullable;
+
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
-import java.nio.file.Paths;
-import com.magento.idea.magento2plugin.util.magento.IsFileInEditableModuleUtil;
-import org.jetbrains.annotations.Nullable;
 
 public final class ModuleIndex {
 
@@ -62,7 +65,7 @@ public final class ModuleIndex {
      * @return List
      */
     public List<String> getModuleNames(final boolean withinProject) {
-        return getNames(withinProject, RegExUtil.Magento.MODULE_NAME);
+        return getNames(ModuleXmlIndex.KEY, withinProject);
     }
 
     /**
@@ -72,44 +75,41 @@ public final class ModuleIndex {
      * @return List
      */
     public List<String> getThemeNames(final boolean withinProject) {
-        return getNames(withinProject, RegExUtil.Magento.THEME_NAME);
+        return getNames(ThemeXmlIndex.KEY, withinProject);
     }
 
     private List<String> getNames(
-            final boolean withinProject,
-            final String pattern
+            final ID<String, String> indexKey,
+            final boolean withinProject
     ) {
-        return ReadAction.compute(() -> {
-            final Set<String> allModulesSet = new LinkedHashSet<>();
+        return ApplicationManager.getApplication().runReadAction((Computable<List<String>>) () -> {
+            final Set<String> names = new LinkedHashSet<>();
             final FileBasedIndex index = FileBasedIndex.getInstance();
-            final Collection<String> allModules = index.getAllKeys(ModuleNameIndex.KEY, project);
-            for (final String moduleName : allModules) {
-                if (!moduleName.matches(pattern)) {
-                    continue;
-                }
+            final Collection<String> allNames = index.getAllKeys(indexKey, project);
+            for (final String name : allNames) {
                 final Collection<VirtualFile> files = index.getContainingFiles(
-                        ModuleNameIndex.KEY, moduleName,
-                        GlobalSearchScope.getScopeRestrictedByFileTypes(
-                                GlobalSearchScope.allScope(project),
-                                PhpFileType.INSTANCE
-                        )
+                        indexKey,
+                        name,
+                        GlobalSearchScope.allScope(project)
                 );
                 if (files.isEmpty()) {
                     continue;
                 }
+
                 for (final VirtualFile virtualFile : files) {
-                    if (withinProject && !IsFileInEditableModuleUtil.execute(project, virtualFile)) {
+                    final VirtualFile root = indexKey.equals(ModuleXmlIndex.KEY)
+                            ? getModuleRoot(virtualFile)
+                            : virtualFile.getParent();
+                    if (root == null || (withinProject && !IsFileInEditableModuleUtil.execute(project, root))) {
                         continue;
                     }
 
-                    allModulesSet.add(moduleName);
+                    names.add(name);
                     break;
                 }
             }
 
-            collectEditableFilesystemModuleNames(allModulesSet, pattern);
-
-            final List<String> allModulesList = new ArrayList<>(allModulesSet);
+            final List<String> allModulesList = new ArrayList<>(names);
             Collections.sort(allModulesList);
             return allModulesList;
         });
@@ -123,63 +123,154 @@ public final class ModuleIndex {
      * @return PsiDirectory
      */
     public @Nullable PsiDirectory getModuleDirectoryByModuleName(final String moduleName) {
-        return ReadAction.compute(() -> {
+        return ApplicationManager.getApplication().runReadAction((Computable<PsiDirectory>) () -> {
+            final VirtualFile moduleDirectory = getModuleDirectoryVirtualFileByModuleName(moduleName);
+            if (moduleDirectory == null) {
+                return null;
+            }
+
+            return PsiManager.getInstance(project).findDirectory(moduleDirectory);
+        });
+    }
+
+    /**
+     * Returns PSI directory of an indexed Magento theme.
+     *
+     * @param themeName theme name in the area/vendor/theme format
+     * @return theme root directory
+     */
+    public @Nullable PsiDirectory getThemeDirectoryByThemeName(final String themeName) {
+        return ApplicationManager.getApplication().runReadAction((Computable<PsiDirectory>) () -> {
+            final VirtualFile themeDirectory = findIndexedThemeDirectory(themeName);
+            if (themeDirectory == null) {
+                return null;
+            }
+
+            return PsiManager.getInstance(project).findDirectory(themeDirectory);
+        });
+    }
+
+    /**
+     * Returns VirtualFile directory of the certain module.
+     *
+     * @param moduleName String
+     *
+     * @return VirtualFile
+     */
+    public @Nullable VirtualFile getModuleDirectoryVirtualFileByModuleName(final String moduleName) {
+        return ApplicationManager.getApplication().runReadAction((Computable<VirtualFile>) () -> {
             if (moduleName == null) {
                 return null;
             }
 
-            if (!DumbService.getInstance(project).isDumb()) {
-                final FileBasedIndex index = FileBasedIndex.getInstance();
-                final Collection<VirtualFile> files = new ArrayList<>(index.getContainingFiles(
-                        ModuleNameIndex.KEY,
-                        moduleName,
-                        GlobalSearchScope.getScopeRestrictedByFileTypes(
-                                GlobalSearchScope.allScope(project),
-                                PhpFileType.INSTANCE
-                        )
-                ));
-
-                if (!files.isEmpty()) {
-                    final VirtualFile virtualFile = files.iterator().next();
-                    final PsiDirectory indexedDirectory = PsiManager.getInstance(project)
-                            .findDirectory(virtualFile.getParent());
-                    if (indexedDirectory != null) {
-                        return indexedDirectory;
-                    }
-                }
+            final VirtualFile indexedDirectory = findIndexedModuleDirectory(moduleName);
+            if (indexedDirectory != null) {
+                return indexedDirectory;
             }
 
-            return findEditableModuleDirectoryFromFilesystem(moduleName);
+            final VirtualFile projectRootDirectory = findEditableModuleDirectoryFromProjectRoots(moduleName);
+            if (projectRootDirectory != null) {
+                return projectRootDirectory;
+            }
+
+            final PsiDirectory editableDirectory = findEditableModuleDirectoryFromFilesystem(moduleName);
+            return editableDirectory == null ? null : editableDirectory.getVirtualFile();
         });
     }
 
-    private void collectEditableFilesystemModuleNames(
-            final Collection<String> target,
-            final String pattern
-    ) {
-        for (final VirtualFile packagesRoot : getEditablePackagesRoots()) {
-            for (final VirtualFile vendorDirectory : packagesRoot.getChildren()) {
-                if (!vendorDirectory.isDirectory()) {
-                    continue;
-                }
+    private @Nullable VirtualFile findIndexedModuleDirectory(final String moduleName) {
+        final Collection<VirtualFile> files;
+        try {
+            files = new ArrayList<>(FileBasedIndex.getInstance().getContainingFiles(
+                    ModuleXmlIndex.KEY,
+                    moduleName,
+                    GlobalSearchScope.allScope(project)
+            ));
+        } catch (IndexNotReadyException exception) {
+            return null;
+        }
 
-                for (final VirtualFile moduleDirectory : vendorDirectory.getChildren()) {
-                    if (!moduleDirectory.isDirectory()) {
-                        continue;
-                    }
-                    if (moduleDirectory.findChild("registration.php") == null) {
-                        continue;
-                    }
+        final List<VirtualFile> moduleDirectories = new ArrayList<>();
+        for (final VirtualFile virtualFile : files) {
+            final VirtualFile moduleDirectory = getModuleRoot(virtualFile);
+            if (moduleDirectory != null && moduleDirectory.isValid() && moduleDirectory.isDirectory()) {
+                moduleDirectories.add(moduleDirectory);
+            }
+        }
 
-                    final String moduleName = vendorDirectory.getName()
-                            + Package.vendorModuleNameSeparator
-                            + moduleDirectory.getName();
-                    if (moduleName.matches(pattern)) {
-                        target.add(moduleName);
-                    }
+        // Generated runtime copies may declare the same module name as the configured Magento source.
+        for (final String rootPath : getMagentoRootCandidates()) {
+            for (final VirtualFile moduleDirectory : moduleDirectories) {
+                if (FileUtil.isAncestor(rootPath, moduleDirectory.getPath(), true)) {
+                    return moduleDirectory;
                 }
             }
         }
+
+        return moduleDirectories.isEmpty() ? null : moduleDirectories.getFirst();
+    }
+
+    private @Nullable VirtualFile findIndexedThemeDirectory(final String themeName) {
+        if (themeName == null) {
+            return null;
+        }
+
+        final Collection<VirtualFile> files;
+        try {
+            files = new ArrayList<>(FileBasedIndex.getInstance().getContainingFiles(
+                    ThemeXmlIndex.KEY,
+                    themeName,
+                    GlobalSearchScope.allScope(project)
+            ));
+        } catch (IndexNotReadyException exception) {
+            return null;
+        }
+
+        for (final VirtualFile virtualFile : files) {
+            final VirtualFile themeDirectory = virtualFile.getParent();
+            if (themeDirectory != null
+                    && themeDirectory.isValid()
+                    && themeDirectory.isDirectory()) {
+                return themeDirectory;
+            }
+        }
+
+        return null;
+    }
+
+    private @Nullable VirtualFile findEditableModuleDirectoryFromProjectRoots(final String moduleName) {
+        final String[] nameParts = moduleName.split(Package.vendorModuleNameSeparator, 2);
+        if (nameParts.length != 2) {
+            return null;
+        }
+
+        final String configuredRoot = Settings.getMagentoPath(project);
+        if (configuredRoot == null || configuredRoot.isBlank()) {
+            return null;
+        }
+
+        final String rootWithoutLeadingSlash = configuredRoot.startsWith("/")
+                ? configuredRoot.substring(1)
+                : configuredRoot;
+        final String moduleRelativePath = Package.packagesRoot + "/"
+                + nameParts[0] + "/" + nameParts[1];
+        final List<String> relativePathCandidates = new ArrayList<>();
+        relativePathCandidates.add(rootWithoutLeadingSlash + "/" + moduleRelativePath);
+        relativePathCandidates.add(moduleRelativePath);
+
+        for (final VirtualFile contentRoot : ProjectRootManager.getInstance(project).getContentRoots()) {
+            for (final String relativePath : relativePathCandidates) {
+                final VirtualFile moduleDirectory = contentRoot.findFileByRelativePath(relativePath);
+                if (moduleDirectory != null
+                        && moduleDirectory.isValid()
+                        && moduleDirectory.isDirectory()
+                        && moduleDirectory.findFileByRelativePath("etc/module.xml") != null) {
+                    return moduleDirectory;
+                }
+            }
+        }
+
+        return null;
     }
 
     private @Nullable PsiDirectory findEditableModuleDirectoryFromFilesystem(final String moduleName) {
@@ -194,7 +285,9 @@ public final class ModuleIndex {
                     Paths.get(rootPath, Package.packagesRoot, nameParts[0], nameParts[1]).normalize().toString()
             );
             final VirtualFile moduleDirectory = fileSystem.refreshAndFindFileByPath(modulePath);
-            if (moduleDirectory == null || !moduleDirectory.isDirectory()) {
+            if (moduleDirectory == null
+                    || !moduleDirectory.isDirectory()
+                    || moduleDirectory.findFileByRelativePath("etc/module.xml") == null) {
                 continue;
             }
 
@@ -207,22 +300,12 @@ public final class ModuleIndex {
         return null;
     }
 
-    private Collection<VirtualFile> getEditablePackagesRoots() {
-        final Set<VirtualFile> packagesRoots = new LinkedHashSet<>();
-        final LocalFileSystem fileSystem = LocalFileSystem.getInstance();
-
-        for (final String rootPath : getMagentoRootCandidates()) {
-            final VirtualFile packagesRoot = fileSystem.refreshAndFindFileByPath(
-                    FileUtil.toSystemIndependentName(
-                            Paths.get(rootPath, Package.packagesRoot).normalize().toString()
-                    )
-            );
-            if (packagesRoot != null && packagesRoot.isDirectory()) {
-                packagesRoots.add(packagesRoot);
-            }
+    private @Nullable VirtualFile getModuleRoot(final VirtualFile moduleXmlFile) {
+        if (moduleXmlFile == null || moduleXmlFile.getParent() == null) {
+            return null;
         }
 
-        return packagesRoots;
+        return moduleXmlFile.getParent().getParent();
     }
 
     private Collection<String> getMagentoRootCandidates() {
@@ -240,10 +323,22 @@ public final class ModuleIndex {
                     ? configuredRoot.substring(1)
                     : configuredRoot;
             candidates.add(FileUtil.toSystemIndependentName(
-                    Paths.get(basePath, rootWithoutLeadingSlash).normalize().toString()
+                    Paths.get(basePath).resolve(rootWithoutLeadingSlash).normalize().toString()
             ));
             candidates.add(FileUtil.toSystemIndependentName(
-                    Paths.get(basePath, configuredRoot).normalize().toString()
+                    Paths.get(basePath).resolve(configuredRoot).normalize().toString()
+            ));
+        }
+
+        for (final VirtualFile contentRoot : ProjectRootManager.getInstance(project).getContentRoots()) {
+            final String rootWithoutLeadingSlash = configuredRoot.startsWith("/")
+                    ? configuredRoot.substring(1)
+                    : configuredRoot;
+            candidates.add(FileUtil.toSystemIndependentName(
+                    Paths.get(contentRoot.getPath()).resolve(rootWithoutLeadingSlash).normalize().toString()
+            ));
+            candidates.add(FileUtil.toSystemIndependentName(
+                    Paths.get(contentRoot.getPath()).resolve(configuredRoot).normalize().toString()
             ));
         }
 

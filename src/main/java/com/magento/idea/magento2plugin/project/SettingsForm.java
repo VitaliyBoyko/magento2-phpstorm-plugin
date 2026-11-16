@@ -5,30 +5,43 @@
 
 package com.magento.idea.magento2plugin.project;
 
+import com.intellij.notification.NotificationType;
 import com.intellij.openapi.fileChooser.FileChooser;
 import com.intellij.openapi.fileChooser.FileChooserDescriptor;
 import com.intellij.openapi.fileChooser.FileChooserDescriptorFactory;
 import com.intellij.openapi.options.ConfigurationException;
+import com.intellij.openapi.options.SearchableConfigurable;
 import com.intellij.openapi.project.Project;
+import com.intellij.openapi.ui.Messages;
 import com.intellij.openapi.ui.TextFieldWithBrowseButton;
 import com.intellij.openapi.util.Pair;
+import com.intellij.openapi.util.text.HtmlChunk;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.openapi.vfs.LocalFileSystem;
 import com.intellij.openapi.vfs.VirtualFile;
-import com.jetbrains.php.frameworks.PhpFrameworkConfigurable;
 import com.magento.idea.magento2plugin.indexes.IndexManager;
-import com.magento.idea.magento2plugin.init.ConfigurationManager;
+import com.magento.idea.magento2plugin.project.MagentoSkillInstaller.AgentTarget;
 import com.magento.idea.magento2plugin.magento.packages.MagentoComponentManager;
+import com.magento.idea.magento2plugin.project.MagentoSkillInstaller.Skill;
+import com.magento.idea.magento2plugin.project.indexing.MagentoAdditionalLibraryRootsProvider;
+import com.magento.idea.magento2plugin.project.indexing.MagentoIndexingExclusionService;
+import com.magento.idea.magento2plugin.project.startup.ReaderModeHighlightingReset;
 import com.magento.idea.magento2plugin.project.util.GetProjectBasePath;
 import com.magento.idea.magento2plugin.project.validator.SettingsFormValidator;
 import com.magento.idea.magento2plugin.util.magento.MagentoVersionUtil;
-import java.awt.event.MouseAdapter;
-import java.awt.event.MouseEvent;
+import com.magento.idea.magento2plugin.updates.MagentoUpdatesPanel;
+import java.awt.BorderLayout;
+import java.io.File;
+import java.io.IOException;
+import java.util.List;
+import java.util.Objects;
 import javax.swing.JButton;
 import javax.swing.JCheckBox;
+import javax.swing.JComboBox;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
+import javax.swing.JTextArea;
 import javax.swing.JTextField;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
@@ -40,11 +53,12 @@ import org.jetbrains.annotations.Nullable;
         "PMD.TooManyFields",
         "PMD.TooManyMethods"
 })
-public class SettingsForm implements PhpFrameworkConfigurable {
+public class SettingsForm implements SearchableConfigurable {
 
     private static final String DEFAULT_MAGENTO_EDITION_LABEL = "Platform Version:";
 
     private final Project project;
+    private com.intellij.openapi.Disposable settingsListenerDisposable;
     private JCheckBox pluginEnabled;
     private JButton buttonReindex;
     private JPanel panel;
@@ -52,11 +66,21 @@ public class SettingsForm implements PhpFrameworkConfigurable {
     private JTextField magentoVersion;
     private JTextField moduleDefaultLicenseName;
     private JCheckBox mftfSupportEnabled;
+    private JCheckBox excludeGeneratedFiles;
     private TextFieldWithBrowseButton magentoPath;
     private JTextField mcpCliToolCandidates;
+    private JTextField publishedReleasesUrl;
+    private JTextField additionalExcludedPaths;
+    private JTextArea effectiveExclusionsArea;
+    private JPanel updatesContainer;
+    private MagentoUpdatesPanel updatesPanel;
+    private JButton installMagentoScaffoldSkillButton;
+    private JButton installMagentoInspectSkillButton;
+    private JComboBox<AgentTarget> skillAgentTargetSelect;
     private final SettingsFormValidator validator = new SettingsFormValidator(this);
     private JLabel magentoVersionLabel;//NOPMD
     private JLabel magentoPathLabel;//NOPMD
+    private JLabel moduleDefaultLicenseNameLabel;//NOPMD
 
     public SettingsForm(@NotNull final Project project) {
         this.project = project;
@@ -77,22 +101,34 @@ public class SettingsForm implements PhpFrameworkConfigurable {
     @Nullable
     @Override
     public JComponent createComponent() {
-        buttonReindex.addMouseListener(
-                new MouseAdapter() {
-                    @Override
-                    public void mouseClicked(final MouseEvent event) {
-                        reindex();
-                        super.mouseClicked(event);
-                    }
-                }
-        );
+        updatesPanel = new MagentoUpdatesPanel(project);
+        updatesContainer.setLayout(new BorderLayout());
+        updatesContainer.removeAll();
+        updatesContainer.add(updatesPanel, BorderLayout.CENTER);
+        buttonReindex.addActionListener(event -> reindexFromForm());
 
-        regenerateUrnMapButton.addMouseListener(
+        regenerateUrnMapButton.addActionListener(
                 new RegenerateUrnMapListener(project)
         );
+        installMagentoScaffoldSkillButton.addActionListener(
+                event -> installMagentoSkill(Skill.MAGENTO_SCAFFOLD)
+        );
+        installMagentoInspectSkillButton.addActionListener(
+                event -> installMagentoSkill(Skill.MAGENTO_INSPECT)
+        );
+        skillAgentTargetSelect.removeAllItems();
+        for (final AgentTarget target : AgentTarget.values()) {
+            skillAgentTargetSelect.addItem(target);
+        }
+        skillAgentTargetSelect.setSelectedItem(AgentTarget.PROJECT_SKILLS);
 
+        pluginEnabled.setSelected(getSettings().pluginEnabled);
+        refreshPhpDependentControlsVisibility();
         refreshFormStatus(getSettings().pluginEnabled);
-        pluginEnabled.addActionListener(e -> refreshFormStatus(pluginEnabled.isSelected()));
+        pluginEnabled.addActionListener(e -> {
+            refreshFormStatus(pluginEnabled.isSelected());
+            updateEffectiveExclusionsDisplay();
+        });
 
         moduleDefaultLicenseName.setText(getSettings().defaultLicense);
         mftfSupportEnabled.setSelected(getSettings().mftfSupportEnabled);
@@ -100,28 +136,182 @@ public class SettingsForm implements PhpFrameworkConfigurable {
         mcpCliToolCandidates.setText(
                 Settings.getNormalizedMcpCliToolCandidates(getSettings().mcpCliToolCandidates)
         );
+        publishedReleasesUrl.setText(getSettings().getPublishedReleasesUrl());
+        excludeGeneratedFiles.setSelected(getSettings().isExcludeGeneratedFiles());
+        additionalExcludedPaths.setText(
+                Settings.getNormalizedAdditionalExcludedPaths(getSettings().getAdditionalExcludedPaths())
+        );
+
+        excludeGeneratedFiles.addActionListener(e -> updateEffectiveExclusionsDisplay());
+        additionalExcludedPaths.getDocument().addDocumentListener(new DocumentListener() {
+            @Override
+            public void insertUpdate(final DocumentEvent e) {
+                updateEffectiveExclusionsDisplay();
+            }
+
+            @Override
+            public void removeUpdate(final DocumentEvent e) {
+                updateEffectiveExclusionsDisplay();
+            }
+
+            @Override
+            public void changedUpdate(final DocumentEvent e) {
+                updateEffectiveExclusionsDisplay();
+            }
+        });
+
         resolveMagentoVersion();
 
         addPathListener();
         addMagentoVersionListener();
         updateMagentoVersion();
+        updateEffectiveExclusionsDisplay();
+
+        if (settingsListenerDisposable != null) {
+            com.intellij.openapi.util.Disposer.dispose(settingsListenerDisposable);
+        }
+        final com.intellij.openapi.Disposable listenerDisposable =
+                com.intellij.openapi.util.Disposer.newDisposable("Magento settings UI listener");
+        settingsListenerDisposable = listenerDisposable;
+        getSettings().addListener((state, oldState) -> {
+            com.intellij.openapi.application.ApplicationManager.getApplication().invokeLater(() -> {
+                if (settingsListenerDisposable != listenerDisposable) {
+                    return;
+                }
+                pluginEnabled.setSelected(state.isPluginEnabled());
+                magentoPath.getTextField().setText(StringUtil.notNullize(state.getMagentoPath()));
+                excludeGeneratedFiles.setSelected(state.getExcludeGeneratedFiles() == null || state.getExcludeGeneratedFiles());
+                refreshFormStatus(state.isPluginEnabled());
+                updateMagentoVersion();
+                updateEffectiveExclusionsDisplay();
+            });
+        }, listenerDisposable);
 
         return (JComponent) panel;
     }
 
     private void refreshFormStatus(final boolean isEnabled) {
+        if (updatesPanel != null) {
+            updatesPanel.setIntegrationEnabled(isEnabled);
+        }
         buttonReindex.setEnabled(isEnabled);
         regenerateUrnMapButton.setEnabled(isEnabled);
         magentoVersion.setEnabled(isEnabled);
         mftfSupportEnabled.setEnabled(isEnabled);
         magentoPath.setEnabled(isEnabled);
         mcpCliToolCandidates.setEnabled(isEnabled);
+        publishedReleasesUrl.setEnabled(isEnabled);
         moduleDefaultLicenseName.setEnabled(isEnabled);
+        installMagentoScaffoldSkillButton.setEnabled(isEnabled);
+        installMagentoInspectSkillButton.setEnabled(isEnabled);
+        skillAgentTargetSelect.setEnabled(isEnabled);
+        excludeGeneratedFiles.setEnabled(isEnabled);
+        additionalExcludedPaths.setEnabled(isEnabled);
+        effectiveExclusionsArea.setEnabled(isEnabled);
+    }
+
+    private void refreshPhpDependentControlsVisibility() {
+        final boolean isVisible = isPhpDependentControlsVisible();
+
+        moduleDefaultLicenseNameLabel.setVisible(isVisible);
+        moduleDefaultLicenseName.setVisible(isVisible);
+        mftfSupportEnabled.setVisible(isVisible);
+    }
+
+    protected boolean isPhpDependentControlsVisible() {
+        return false;
     }
 
     protected void reindex() {
+        MagentoAdditionalLibraryRootsProvider.refreshRoots(project);
         IndexManager.manualReindex();
         MagentoComponentManager.getInstance(project).flushModules();
+    }
+
+    private void reindexFromForm() {
+        try {
+            this.validator.validate();
+            final MagentoProjectConfigurationService.ConfigurationResult configResult =
+                    MagentoProjectConfigurationService.getInstance(project).configure(
+                            getMagentoPath(),
+                            pluginEnabled.isSelected(),
+                            excludeGeneratedFiles.isSelected(),
+                            null
+                    );
+            if (!configResult.success() && !configResult.validationErrors().isEmpty()) {
+                throw new ConfigurationException(String.join("<br>", configResult.validationErrors()));
+            }
+            saveSettings();
+            reindex();
+            MagentoNotificationUtil.notifyGlobally(
+                    project,
+                    "Magento 2 and Adobe Commerce",
+                    "Magento indexes rebuild was requested.",
+                    NotificationType.INFORMATION
+            );
+        } catch (final ConfigurationException exception) {
+            final HtmlChunk message = exception.getMessageHtml();
+            Messages.showErrorDialog(
+                    project,
+                    message.isEmpty() ? "Invalid Magento settings." : message.wrapWith("html").toString(),
+                    "Magento Reindex"
+            );
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private void installMagentoSkill(final Skill skill) {
+        final AgentTarget agentTarget = getSelectedSkillAgentTarget();
+
+        try {
+            if (MagentoSkillInstaller.hasDifferentExistingSkill(project, skill, agentTarget)
+                    && !confirmSkillReplacement(skill, agentTarget)) {
+                return;
+            }
+
+            final String installedPath = MagentoSkillInstaller.install(project, skill, agentTarget);
+            MagentoNotificationUtil.notifyGlobally(
+                    project,
+                    "Magento 2 and Adobe Commerce",
+                    skill.getDisplayName() + " skill was added for "
+                            + agentTarget.getDisplayName() + " at " + installedPath,
+                    NotificationType.INFORMATION
+            );
+        } catch (final IOException | IllegalStateException exception) {
+            final String errorMessage = StringUtil.notNullize(
+                    exception.getLocalizedMessage(),
+                    exception.getClass().getSimpleName()
+            );
+            MagentoNotificationUtil.notifyGlobally(
+                    project,
+                    "Magento 2 and Adobe Commerce",
+                    "Unable to add " + skill.getDisplayName() + " skill for "
+                            + agentTarget.getDisplayName() + ": "
+                            + StringUtil.escapeXmlEntities(errorMessage),
+                    NotificationType.WARNING
+            );
+        }
+    }
+
+    private AgentTarget getSelectedSkillAgentTarget() {
+        final Object selectedItem = skillAgentTargetSelect.getSelectedItem();
+        if (selectedItem instanceof AgentTarget) {
+            return (AgentTarget) selectedItem;
+        }
+
+        return AgentTarget.PROJECT_SKILLS;
+    }
+
+    private boolean confirmSkillReplacement(final Skill skill, final AgentTarget agentTarget) {
+        return Messages.showYesNoDialog(
+                project,
+                skill.getDisplayName()
+                        + " skill already exists for " + agentTarget.getDisplayName()
+                        + " in this project and has different content. "
+                        + "Replace it with the bundled Magento skill?",
+                "Replace Magento Skill",
+                Messages.getQuestionIcon()
+        ) == Messages.YES;
     }
 
     @Override
@@ -144,8 +334,24 @@ public class SettingsForm implements PhpFrameworkConfigurable {
                 .getNormalizedMcpCliToolCandidates(mcpCliToolCandidates.getText())
                 .equals(Settings.getNormalizedMcpCliToolCandidates(getSettings().mcpCliToolCandidates));
 
+        final boolean publishedReleasesUrlChanged = !getPublishedReleasesUrl()
+                .equals(getSettings().getPublishedReleasesUrl());
+        final boolean excludeGeneratedFilesChanged = excludeGeneratedFiles.isSelected()
+                != getSettings().isExcludeGeneratedFiles();
+        final boolean additionalExcludedPathsChanged = !Settings
+                .getNormalizedAdditionalExcludedPaths(
+                        Settings.parseAdditionalExcludedPaths(additionalExcludedPaths.getText())
+                )
+                .equals(
+                        Settings.getNormalizedAdditionalExcludedPaths(
+                                getSettings().getAdditionalExcludedPaths()
+                        )
+                );
+
         return statusChanged || licenseChanged || mftfSupportChanged
-                || magentoPathChanged || versionChanged || mcpCliToolCandidatesChanged;
+                || magentoPathChanged || versionChanged || mcpCliToolCandidatesChanged
+                || publishedReleasesUrlChanged || excludeGeneratedFilesChanged
+                || additionalExcludedPathsChanged || (updatesPanel != null && updatesPanel.isModified());
     }
 
     private void resolveMagentoVersion() {
@@ -155,33 +361,70 @@ public class SettingsForm implements PhpFrameworkConfigurable {
     }
 
     private boolean isMagentoPathChanged() {
-        return !getMagentoPath().equals(
-                StringUtil.notNullize(Settings.getMagentoPath(project))
-        );
+        final String currentFormPath = getMagentoPath();
+        final String savedPath = StringUtil.notNullize(Settings.getMagentoPath(project));
+        if (currentFormPath.equals(savedPath)) {
+            return false;
+        }
+        final String resolvedFormPath = MagentoProjectConfigurationService.getInstance(project).resolvePath(currentFormPath);
+        return !Objects.equals(resolvedFormPath, savedPath);
     }
 
     @Override
     public void apply() throws ConfigurationException {
         this.validator.validate();
+        if (updatesPanel != null) {
+            updatesPanel.validateSettings();
+        }
+
+        final MagentoProjectConfigurationService.ConfigurationResult configResult =
+                MagentoProjectConfigurationService.getInstance(project).configure(
+                        getMagentoPath(),
+                        pluginEnabled.isSelected(),
+                        excludeGeneratedFiles.isSelected(),
+                        null
+                );
+
+        if (!configResult.success() && !configResult.validationErrors().isEmpty()) {
+            throw new ConfigurationException(String.join("<br>", configResult.validationErrors()));
+        }
+
         saveSettings();
 
-        ConfigurationManager.getInstance().refreshIncludePaths(getSettings().getState(), project);
+        if (updatesPanel != null) {
+            updatesPanel.apply();
+        }
+
+        MagentoIndexingExclusionService.getInstance(project).applyExclusions();
+        afterSettingsApplied(getSettings().getState());
 
         if (buttonReindex.isEnabled()) {
             reindex();
         }
     }
 
+    protected void afterSettingsApplied(final @NotNull Settings.State state) {
+        // PHP-specific settings integrations are added by PhpFrameworkSettingsForm.
+    }
+
     private void saveSettings() {
-        getSettings().pluginEnabled = pluginEnabled.isSelected();
         getSettings().defaultLicense = moduleDefaultLicenseName.getText();
         getSettings().mftfSupportEnabled = mftfSupportEnabled.isSelected();
-        getSettings().setMagentoPath(getMagentoPath());
         getSettings().mcpCliToolCandidates = Settings.getNormalizedMcpCliToolCandidates(
                 mcpCliToolCandidates.getText()
         );
+        getSettings().publishedReleasesUrl = getPublishedReleasesUrl();
+        getSettings().setAdditionalExcludedPaths(
+                Settings.parseAdditionalExcludedPaths(additionalExcludedPaths.getText())
+        );
         buttonReindex.setEnabled(getSettings().pluginEnabled);
         regenerateUrnMapButton.setEnabled(getSettings().pluginEnabled);
+        ReaderModeHighlightingReset.run(project);
+    }
+
+    @NotNull
+    public String getPublishedReleasesUrl() {
+        return Settings.normalizePublishedReleasesUrl(publishedReleasesUrl.getText());
     }
 
     @NotNull
@@ -198,6 +441,9 @@ public class SettingsForm implements PhpFrameworkConfigurable {
 
     @Override
     public void reset() {
+        if (updatesPanel != null) {
+            updatesPanel.reset();
+        }
         pluginEnabled.setSelected(getSettings().pluginEnabled);
         moduleDefaultLicenseName.setText(getSettings().defaultLicense);
         mftfSupportEnabled.setSelected(getSettings().mftfSupportEnabled);
@@ -205,12 +451,71 @@ public class SettingsForm implements PhpFrameworkConfigurable {
         mcpCliToolCandidates.setText(
                 Settings.getNormalizedMcpCliToolCandidates(getSettings().mcpCliToolCandidates)
         );
+        publishedReleasesUrl.setText(getSettings().getPublishedReleasesUrl());
+        excludeGeneratedFiles.setSelected(getSettings().isExcludeGeneratedFiles());
+        additionalExcludedPaths.setText(
+                Settings.getNormalizedAdditionalExcludedPaths(getSettings().getAdditionalExcludedPaths())
+        );
         refreshFormStatus(pluginEnabled.isSelected());
+        updateEffectiveExclusionsDisplay();
+    }
+
+    public void updateEffectiveExclusionsDisplay() {
+        if (effectiveExclusionsArea == null) {
+            return;
+        }
+
+        final String currentPath = getMagentoPath();
+        final boolean pathValid = isPathValid(currentPath);
+
+        if (!pathValid) {
+            effectiveExclusionsArea.setText(
+                    "Configure a valid Magento installation path before indexing exclusions can be applied."
+            );
+            return;
+        }
+
+        if (!pluginEnabled.isSelected() || !excludeGeneratedFiles.isSelected()) {
+            effectiveExclusionsArea.setText("Indexing exclusions are disabled.");
+            return;
+        }
+
+        final List<String> additional = Settings.parseAdditionalExcludedPaths(
+                additionalExcludedPaths.getText()
+        );
+        final MagentoIndexingExclusionService service = MagentoIndexingExclusionService.getInstance(project);
+        final MagentoIndexingExclusionService.ExclusionPreview preview = service.previewExclusions(
+                currentPath,
+                excludeGeneratedFiles.isSelected(),
+                additional
+        );
+
+        final StringBuilder sb = new StringBuilder();
+        for (final MagentoIndexingExclusionService.ExclusionEntry entry : preview.effectiveExclusions()) {
+            sb.append(entry.relativePath())
+                    .append(" — ")
+                    .append(entry.reason())
+                    .append("\n");
+        }
+        if (!preview.skippedEntries().isEmpty()) {
+            sb.append("\nSkipped:\n");
+            for (final MagentoIndexingExclusionService.SkippedEntry skipped : preview.skippedEntries()) {
+                sb.append(skipped.path())
+                        .append(" (")
+                        .append(skipped.reason())
+                        .append(")\n");
+            }
+        }
+        effectiveExclusionsArea.setText(sb.toString().trim());
     }
 
     @Override
     public void disposeUIResources() {
-        //do nothing
+        final com.intellij.openapi.Disposable listenerDisposable = settingsListenerDisposable;
+        settingsListenerDisposable = null;
+        if (listenerDisposable != null) {
+            com.intellij.openapi.util.Disposer.dispose(listenerDisposable);
+        }
     }
 
     public Settings getSettings() {
@@ -251,16 +556,19 @@ public class SettingsForm implements PhpFrameworkConfigurable {
             @Override
             public void insertUpdate(final DocumentEvent documentEvent) {
                 updateMagentoVersion();
+                updateEffectiveExclusionsDisplay();
             }
 
             @Override
             public void removeUpdate(final DocumentEvent documentEvent) {
                 updateMagentoVersion();
+                updateEffectiveExclusionsDisplay();
             }
 
             @Override
             public void changedUpdate(final DocumentEvent documentEvent) {
                 updateMagentoVersion();
+                updateEffectiveExclusionsDisplay();
             }
         };
         this.magentoPath.getTextField().getDocument().addDocumentListener(onPathChange);
@@ -286,9 +594,45 @@ public class SettingsForm implements PhpFrameworkConfigurable {
         getSettings().magentoEdition = resolvedEdition;
     }
 
-    @Override
     public boolean isBeingUsed() {
+        return isMagentoSupportEnabled();
+    }
+
+    protected boolean isMagentoSupportEnabled() {
         return this.pluginEnabled.isSelected();
+    }
+
+    public @NotNull Project getProject() {
+        return project;
+    }
+
+    public @NotNull JCheckBox getExcludeGeneratedFilesCheckBox() {
+        return this.excludeGeneratedFiles;
+    }
+
+    public @NotNull JTextField getAdditionalExcludedPathsField() {
+        return this.additionalExcludedPaths;
+    }
+
+    public @NotNull JTextArea getEffectiveExclusionsArea() {
+        return this.effectiveExclusionsArea;
+    }
+
+    public @NotNull JCheckBox getPluginEnabledCheckBox() {
+        return this.pluginEnabled;
+    }
+
+    public @NotNull TextFieldWithBrowseButton getMagentoPathField() {
+        return this.magentoPath;
+    }
+
+    private boolean isPathValid(final String path) {
+        if (StringUtil.isEmptyOrSpaces(path)) {
+            return false;
+        }
+        final MagentoProjectConfigurationService.InstallationDetails details =
+                MagentoProjectConfigurationService.getInstance(project).inspectPath(path);
+        return details.exists() && details.isDirectory();
     }
 
     @NotNull
