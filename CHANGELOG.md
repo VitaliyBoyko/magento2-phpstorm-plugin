@@ -7,6 +7,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0).
 
 ## 2026.3.7
 
+### Security
+
+- Update Gradle to 9.9.2 for version-catalog, daemon-registry, TestKit temporary-directory and dependency-verification security fixes.
+
 ### Added
 
 - Use Magento MCP tools from Codex or Claude Code on a development server with JetBrains Headless Code Engine. Download `magento-hce.pyz` from the same GitHub release as the desktop plugin and run setup from your checkout. Setup verifies the runtime and plugin, offers JetBrains sign-in, and indexes the project before registering the client. See the [headless installation guide](modules/hce/README.md#install-on-a-development-host).
