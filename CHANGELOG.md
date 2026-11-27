@@ -7,6 +7,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0).
 
 ## 2026.3.7
 
+### Security
+
+- Update Gradle to 9.9.3 with verified distribution integrity, including fixes for dependency verification bypasses and daemon registry trust and permission vulnerabilities.
+
 ### Added
 
 - Codex and Claude Code can query Magento module dependencies, inspect XML declarations, and check whether a change requires a maintenance command through JetBrains Headless Code Engine. Each [paired alpha release](https://github.com/magento/magento2-phpstorm-plugin/releases) includes its own installer. See [supported hosts, licensing, and setup](https://github.com/magento/magento2-phpstorm-plugin/blob/5.4.0-develop/modules/hce/README.md#install-on-a-development-host).
